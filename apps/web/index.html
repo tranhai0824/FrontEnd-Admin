@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TopScholar - Cổng học bổng sinh viên</title>
+    <script>
+      // Tránh lỗi gán thuộc tính fetch trong môi trường iframe bị giới hạn
+      (function() {
+        try {
+          var nativeFetch = window.fetch;
+          var customFetch = nativeFetch;
+          try {
+            Object.defineProperty(window, 'fetch', {
+              get: function() { return customFetch; },
+              set: function(v) { 
+                console.warn('Redirected custom setting of window.fetch');
+                customFetch = v;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          } catch (e1) {
+            try {
+              Object.defineProperty(Window.prototype, 'fetch', {
+                get: function() { return customFetch; },
+                set: function(v) {
+                  console.warn('Redirected custom setting of Window.prototype.fetch');
+                  customFetch = v;
+                },
+                configurable: true,
+                enumerable: true
+              });
+            } catch (e2) {
+              console.error('Failed to configure fetch setter fallback', e2);
+            }
+          }
+        } catch (e) {
+          console.error('Fetch safety patch error:', e);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

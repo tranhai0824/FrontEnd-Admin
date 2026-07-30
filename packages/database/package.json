@@ -1,0 +1,31 @@
+{
+  "name": "@scholarship/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "dev": "echo 'no dev task'",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint \"src/**/*.ts\" --max-warnings 0",
+    "test": "echo 'no tests' && exit 0",
+    "db:generate": "dotenv -e ../../.env -- prisma generate",
+    "db:validate": "dotenv -e ../../.env -- prisma validate",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+    "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:seed": "dotenv -e ../../.env -- node prisma/seed.mjs",
+    "db:studio": "dotenv -e ../../.env -- prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.19.1",
+    "argon2": "^0.41.1"
+  },
+  "devDependencies": {
+    "@scholarship/config": "workspace:*",
+    "@types/node": "^20.14.0",
+    "dotenv-cli": "^8.0.0",
+    "eslint": "^8.57.0",
+    "prisma": "^5.19.1",
+    "typescript": "^5.5.4"
+  }
+}
