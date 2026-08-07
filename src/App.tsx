@@ -3,9 +3,21 @@ import { SCHOLARSHIPS_DATA } from './data/scholarships';
 import { ApplicationForm } from './types';
 import ScholarshipDetailModal from './components/ScholarshipDetailModal';
 import ScholarshipList from './components/ScholarshipList';
-import ScholarshipFilterPage from './components/ScholarshipFilterPage';
+import ScholarshipFilterPage, { type ScholarshipSearchRequest } from './components/ScholarshipFilterPage';
 import AuthModal, { AuthenticatedUser } from './components/AuthModal';
-import heroBackground from './assets/images/bgr.png';
+import StatsBar from './components/StatsBar';
+import ScholarshipPartnersCarousel from './components/ScholarshipPartnersCarousel';
+import GreenBadgePromo from './components/GreenBadgePromo';
+import ReasonsSection from './components/ReasonsSection';
+import SuccessStories from './components/SuccessStories';
+import PartnersSection from './components/PartnersSection';
+import FooterBackground from './components/FooterBackground';
+import storyMinhAnh from './assets/images/story-minh-anh.png';
+import storyTuan from './assets/images/story-tuan.png';
+import consultingExpert from './assets/images/consulting-expert.png';
+import consultingReview from './assets/images/consulting-review.png';
+import consultingInterview from './assets/images/consulting-interview.png';
+import consultingCtaBackground from './assets/images/consulting-cta-background.png';
 import { 
   GraduationCap, 
   Heart, 
@@ -23,11 +35,34 @@ import {
   AlertCircle,
   Inbox,
   CheckCircle2,
+  ArrowRight,
   ArrowUpRight,
   TrendingUp,
   UserCheck,
   Compass,
   Laptop,
+  Megaphone,
+  Route,
+  ArrowLeftRight,
+  TriangleAlert,
+  MapPinned,
+  Mic,
+  NotebookPen,
+  ShoppingCart,
+  Calculator,
+  Landmark,
+  Truck,
+  BrainCircuit,
+  Database,
+  Code2,
+  Zap,
+  CarFront,
+  Cog,
+  Building2,
+  Palette,
+  MonitorPlay,
+  MessagesSquare,
+  Scale,
   Coins,
   ShieldCheck,
   Languages,
@@ -42,9 +77,34 @@ import {
   User,
   LogOut,
   Settings,
-  ChevronDown
+  ChevronDown,
+  Bell,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+
+const MAJOR_MENU_ITEMS = [
+  ['Marketing', Megaphone],
+  ['Thương mại điện tử', ShoppingCart],
+  ['Kế toán và Kiểm toán', Calculator],
+  ['Tài chính – Ngân hàng', Landmark],
+  ['Quản trị kinh doanh', Briefcase],
+  ['Kinh doanh quốc tế', Globe],
+  ['Logistics và Quản lý chuỗi cung ứng', Truck],
+  ['Trí tuệ nhân tạo', BrainCircuit],
+  ['Khoa học dữ liệu', Database],
+  ['An toàn thông tin', ShieldCheck],
+  ['Kỹ thuật phần mềm', Code2],
+  ['Điện – Điện tử', Zap],
+  ['Công nghệ ô tô', CarFront],
+  ['Tự động hóa', Cog],
+  ['Kiến trúc', Building2],
+  ['Thiết kế đồ họa', Palette],
+  ['Truyền thông đa phương tiện', MonitorPlay],
+  ['Quan hệ công chúng', MessagesSquare],
+  ['Ngôn ngữ Anh', Languages],
+  ['Luật kinh tế', Scale],
+] as const;
 
 export default function App() {
   // Trạng thái màn hình chính: 'home' | 'saved' | 'applications' | 'filter'
@@ -58,9 +118,13 @@ export default function App() {
   const [heroKeyword, setHeroKeyword] = useState('');
   const [heroRegion, setHeroRegion] = useState('');
   const [heroLevel, setHeroLevel] = useState('');
+  const [heroMajor, setHeroMajor] = useState('');
+  const [heroScholarshipType, setHeroScholarshipType] = useState('');
+  const [filterSearchRequest, setFilterSearchRequest] = useState<ScholarshipSearchRequest | undefined>();
 
   // Trạng thái menu thả xuống chính
-  const [activeMenuDropdown, setActiveMenuDropdown] = useState<'schools_majors' | 'abroad' | 'funding' | 'apply' | 'advising' | null>(null);
+  const [activeMenuDropdown, setActiveMenuDropdown] = useState<'schools_majors' | 'abroad' | 'funding' | 'apply' | 'guide' | 'advising' | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Trạng thái đã lưu / đã ứng tuyển
   const [savedScholarshipIds, setSavedScholarshipIds] = useState<string[]>(() => {
@@ -89,12 +153,41 @@ export default function App() {
   // Trạng thái xem trước đăng nhập / đăng ký
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  // Header dùng panel trượt; CTA trong nội dung dùng hộp thoại ở giữa màn hình.
+  const [authPresentation, setAuthPresentation] = useState<'modal' | 'panel'>('modal');
 
   // Trạng thái phiên người dùng
   const [currentUser, setCurrentUser] = useState<{ name: string; email: string; avatar: string } | null>(() => {
     return null;
   });
   const [showAccountDropdown, setShowAccountDropdown] = useState<boolean>(false);
+
+  useEffect(() => {
+    const openRegistrationForProtectedAction = (event: MouseEvent) => {
+      if (currentUser || showAuthModal) return;
+      const target = event.target as HTMLElement | null;
+      const action = target?.closest<HTMLElement>('button, a');
+      if (!action) return;
+
+      // Giữ các thao tác điều hướng, tìm kiếm và lọc công khai hoạt động bình thường.
+      if (
+        action.closest('#site-header, #auth-modal-overlay, form, #integrated-scholarship-filter-page') ||
+        action.dataset.allowAnonymous === 'true'
+      ) return;
+
+      const main = action.closest('main');
+      if (!main) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setAuthPresentation('modal');
+      setAuthMode('login');
+      setShowAuthModal(true);
+    };
+
+    document.addEventListener('click', openRegistrationForProtectedAction, true);
+    return () => document.removeEventListener('click', openRegistrationForProtectedAction, true);
+  }, [currentUser, showAuthModal]);
 
   const openScholarshipFilterPage = () => {
     setActiveMenuDropdown(null);
@@ -103,10 +196,17 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const openScholarshipFilterWithRequest = (request: ScholarshipSearchRequest) => {
+    setFilterSearchRequest(request);
+    openScholarshipFilterPage();
+  };
+
   const handleClearFilters = () => {
     setHeroKeyword('');
     setHeroRegion('');
     setHeroLevel('');
+    setHeroMajor('');
+    setHeroScholarshipType('');
   };
 
   useEffect(() => {
@@ -189,20 +289,30 @@ export default function App() {
   // Gửi tìm kiếm từ banner chính
   const handleHeroSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
-    openScholarshipFilterPage();
+    openScholarshipFilterWithRequest({
+      keyword: heroKeyword,
+      region: heroRegion,
+      level: heroLevel,
+      major: heroMajor,
+      scholarshipType: heroScholarshipType
+    });
     
     const searchMsg = heroKeyword 
       ? `Đã tìm kiếm: "${heroKeyword}"` 
       : 'Đã tìm kiếm tất cả học bổng';
-    const levelMsg = heroLevel ? ` chương trình ${heroLevel}` : '';
-    triggerFeedback(`${searchMsg}${levelMsg}!`);
+    const filters = [
+      heroMajor && `ngành ${heroMajor}`,
+      heroRegion && `khu vực ${heroRegion}`,
+      heroScholarshipType && `loại ${heroScholarshipType}`,
+    ].filter(Boolean);
+    triggerFeedback(`${searchMsg}${filters.length ? ` – ${filters.join(', ')}` : ''}!`);
   };
 
   // Xử lý khi bấm thẻ khu vực
   const handleCountryCardClick = (countryName: string, regionValue: string) => {
     setHeroRegion(regionValue);
     setHeroKeyword('');
-    openScholarshipFilterPage();
+    openScholarshipFilterWithRequest({ region: regionValue });
     triggerFeedback(`Đang hiển thị các cơ hội học bổng khu vực ${regionValue} (${countryName})`);
   };
 
@@ -210,7 +320,7 @@ export default function App() {
   const handleMajorCardClick = (majorName: string) => {
     setHeroKeyword('');
     setHeroRegion('');
-    openScholarshipFilterPage();
+    openScholarshipFilterWithRequest({ major: majorName });
     triggerFeedback(`Đang hiển thị ngành học: ${majorName}`);
   };
 
@@ -256,6 +366,9 @@ export default function App() {
       {/* TopCV Style Header (White Background) */}
       <header className="bg-white border-b border-slate-100 sticky top-0 z-40 shadow-xs" id="site-header">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-800 hover:bg-slate-100 md:hidden" aria-label="Mở menu điều hướng" aria-expanded={mobileMenuOpen}>
+            <Menu className="h-5 w-5" />
+          </button>
           
           {/* Center Navigation Menus */}
           <nav className="hidden md:flex items-center gap-5 text-xs lg:text-sm font-normal text-[#181818] flex-1 justify-center relative">
@@ -273,65 +386,58 @@ export default function App() {
               <AnimatePresence>
                 {activeMenuDropdown === 'schools_majors' && (
                   <>
-                    <div className="fixed inset-0 z-40" onClick={() => setActiveMenuDropdown(null)} />
+                    <div className="fixed inset-x-0 bottom-0 top-16 z-40" onClick={() => setActiveMenuDropdown(null)} />
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 10 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute left-0 mt-2.5 w-56 bg-white rounded-xl border border-slate-100 shadow-xl py-1.5 z-50 origin-top-left"
+                      className="fixed left-1/2 top-16 z-50 mt-0 w-[min(1060px,calc(100vw-32px))] -translate-x-1/2 rounded-b-xl border border-slate-200 bg-white p-6 shadow-xl"
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveMenuDropdown(null);
-                          setActiveTab('home');
-                          setTimeout(() => {
-                            const el = document.getElementById('partnerships-section');
-                            if (el) el.scrollIntoView({ behavior: 'smooth' });
-                          }, 150);
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs font-normal text-slate-700 hover:bg-[#F4F8FC] hover:text-[#2C6EAF] transition-colors cursor-pointer"
-                      >
-                        Trường Đại Học liên kết
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveMenuDropdown(null);
-                          setActiveTab('home');
-                          setTimeout(() => {
-                            const el = document.getElementById('section-by-major');
-                            if (el) el.scrollIntoView({ behavior: 'smooth' });
-                          }, 150);
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs font-normal text-slate-700 hover:bg-[#F4F8FC] hover:text-[#2C6EAF] transition-colors cursor-pointer"
-                      >
-                        Ngành học được quan tâm
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          openScholarshipFilterPage();
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs font-normal text-slate-700 hover:bg-[#F4F8FC] hover:text-[#2C6EAF] transition-colors cursor-pointer"
-                      >
-                        Tất cả trường & ngành
-                      </button>
+                      <div className="grid grid-cols-[0.68fr_2fr] gap-6">
+                        <section className="border-r-2 border-slate-300 pr-6">
+                          <h3 className="text-base font-bold text-slate-900">Trường theo khu vực</h3>
+                          <div className="mt-3 grid grid-cols-1 gap-y-1">
+                            {['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Thái Nguyên', 'Hải Phòng', 'Huế', 'Cần Thơ', 'Miền Bắc', 'Miền Trung', 'Miền Nam', 'Du học quốc tế'].map((region) => (
+                              <button key={region} type="button" onClick={openScholarshipFilterPage} className="rounded px-1 py-1.5 text-left text-sm text-slate-900 transition-colors hover:bg-[#F4F8FC] hover:text-[#2072E1] hover:underline">
+                                {region}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+
+                        <section>
+                          <h3 className="text-base font-bold text-slate-900">Ngành học phổ biến</h3>
+                          <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1">
+                            {MAJOR_MENU_ITEMS.map(([major, Icon]) => (
+                              <button key={major} type="button" onClick={openScholarshipFilterPage} className="flex items-center gap-2 rounded px-1 py-1.5 text-left text-sm text-slate-900 transition-colors hover:bg-[#F4F8FC] hover:text-[#2072E1] hover:underline">
+                                <Icon aria-hidden="true" className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                                <span>{major}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      </div>
+                      <div className="mt-4 flex justify-end">
+                        <button type="button" onClick={openScholarshipFilterPage} className="group flex items-center gap-1 text-sm font-semibold text-[#2072E1] transition-colors">
+                          <ChevronRight aria-hidden="true" className="h-6 w-6 shrink-0" strokeWidth={1.5} />
+                          <span className="group-hover:underline">Xem tất cả trường học và ngành học</span>
+                        </button>
+                      </div>
                     </motion.div>
                   </>
                 )}
               </AnimatePresence>
             </div>
 
-            {/* 2. Học bổng theo miền */}
+            {/* 2. Học bổng */}
             <div className="relative">
               <button 
                 onClick={() => setActiveMenuDropdown(activeMenuDropdown === 'abroad' ? null : 'abroad')}
                 className={`flex items-center gap-1 py-1 cursor-pointer transition-colors duration-200 ${activeMenuDropdown === 'abroad' ? 'text-[#2C6EAF]' : 'hover:text-[#2B6CB0]'}`}
                 id="nav-tab-abroad"
               >
-                <span>Học bổng theo miền</span>
+                <span>Học bổng</span>
                 <ChevronDown className="w-3.5 h-3.5 text-current opacity-70 transition-colors duration-200" />
               </button>
               <AnimatePresence>
@@ -343,26 +449,48 @@ export default function App() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 10 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute left-0 mt-2.5 w-52 bg-white rounded-xl border border-slate-100 shadow-xl py-1.5 z-50 origin-top-left"
+                      className="fixed left-1/2 top-16 z-50 w-[min(1040px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-xl origin-top"
                     >
-                      {[
-                        { label: 'Miền Bắc', value: 'Miền Bắc' },
-                        { label: 'Miền Nam', value: 'Miền Nam' },
-                        { label: 'Toàn bộ khu vực', value: '' }
-                      ].map((reg) => (
-                        <button
-                          key={reg.label}
-                          type="button"
-                          onClick={() => {
-                            setHeroRegion('');
-                            openScholarshipFilterPage();
-                            triggerFeedback(reg.value ? `Đang hiển thị học bổng khu vực: ${reg.label}` : 'Đang hiển thị toàn bộ học bổng');
-                          }}
-                          className="w-full text-left px-4 py-2 text-xs font-normal text-slate-700 hover:bg-[#F4F8FC] hover:text-[#2C6EAF] transition-colors cursor-pointer"
-                        >
-                          {reg.label}
+                      <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_minmax(220px,0.9fr)]">
+                        {[
+                          { title: 'Theo giá trị', items: ['Học bổng toàn phần', 'Học bổng bán phần', 'Học bổng 100% học phí', 'Học bổng 50% học phí', 'Học bổng hỗ trợ sinh hoạt phí', 'Học bổng nghiên cứu'] },
+                          { title: 'Theo nguồn cấp', items: ['Học bổng chính phủ', 'Học bổng doanh nghiệp', 'Học bổng từ trường', 'Học bổng tổ chức phi lợi nhuận', 'Học bổng cựu sinh viên', 'Học bổng quốc tế'] },
+                          { title: 'Theo tiêu chí', items: ['Học bổng đầu vào', 'Học bổng theo điểm thi THPT', 'Học bổng học sinh giỏi', 'Học bổng tài năng thể thao – nghệ thuật', 'Học bổng hoàn cảnh khó khăn', 'Học bổng nữ sinh ngành STEM'] },
+                        ].map((group, index) => (
+                          <section key={group.title}>
+                            <h3 className="px-4 py-3 text-sm font-semibold text-slate-900">{group.title}</h3>
+                            <div className={`py-1.5 ${index > 0 ? 'border-l-2 border-slate-300' : ''}`}>
+                              {group.items.map((item) => (
+                                <button key={item} type="button" onClick={openScholarshipFilterPage} className="block w-full px-4 py-2 text-left text-sm text-slate-800 transition-colors hover:bg-[#F4F8FC] hover:text-[#2072E1] hover:underline">
+                                  {item}
+                                </button>
+                              ))}
+                            </div>
+                          </section>
+                        ))}
+                        <aside className="flex items-center border-l-2 border-slate-300 p-4">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveMenuDropdown(null);
+                              setShowAuthModal(true);
+                            }}
+                            className="w-full rounded border-2 border-slate-900 bg-white px-5 py-5 text-left text-base font-semibold leading-relaxed text-slate-900 transition-colors hover:border-[#2072E1] hover:text-[#2072E1]"
+                          >
+                            <span className="block">Nắm bắt cơ hội để hiện thực hóa giấc mơ du học của bạn</span>
+                            <span className="mt-4 flex items-center gap-1 text-sm font-semibold text-[#2072E1]">
+                              <ChevronRight aria-hidden="true" className="h-5 w-5 shrink-0" strokeWidth={1.5} />
+                              Đăng ký học bổng
+                            </span>
+                          </button>
+                        </aside>
+                      </div>
+                      <div className="flex justify-end px-4 py-3">
+                        <button type="button" onClick={openScholarshipFilterPage} className="group flex items-center gap-1 text-sm font-semibold text-[#2072E1]">
+                          <ChevronRight aria-hidden="true" className="h-5 w-5 shrink-0" strokeWidth={1.5} />
+                          <span className="group-hover:underline">Xem tất cả học bổng</span>
                         </button>
-                      ))}
+                      </div>
                     </motion.div>
                   </>
                 )}
@@ -370,7 +498,7 @@ export default function App() {
             </div>
 
             {/* 3. Học bổng tài trợ */}
-            <div className="relative">
+            <div className="relative hidden">
               <button 
                 onClick={() => setActiveMenuDropdown(activeMenuDropdown === 'funding' ? null : 'funding')}
                 className={`flex items-center gap-1 py-1 cursor-pointer transition-colors duration-200 ${activeMenuDropdown === 'funding' ? 'text-[#2C6EAF]' : 'hover:text-[#2B6CB0]'}`}
@@ -427,7 +555,7 @@ export default function App() {
             </div>
 
             {/* 4. Nộp hồ sơ */}
-            <div className="relative">
+            <div className="relative hidden">
               <button 
                 onClick={() => setActiveMenuDropdown(activeMenuDropdown === 'apply' ? null : 'apply')}
                 className={`flex items-center gap-1 py-1 cursor-pointer transition-colors duration-200 ${activeMenuDropdown === 'apply' ? 'text-[#2C6EAF]' : 'hover:text-[#2B6CB0]'}`}
@@ -483,6 +611,86 @@ export default function App() {
               </AnimatePresence>
             </div>
 
+            <button type="button" className="flex items-center gap-1 py-1 text-slate-800 transition-colors duration-200 hover:text-[#2072E1]">
+              <span>Đánh giá hồ sơ</span>
+              <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setActiveMenuDropdown(activeMenuDropdown === 'guide' ? null : 'guide')}
+                className={`flex items-center gap-1 py-1 transition-colors duration-200 ${activeMenuDropdown === 'guide' ? 'text-[#2072E1]' : 'text-slate-800 hover:text-[#2072E1]'}`}
+              >
+                <span>Cẩm nang</span>
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+              </button>
+              <AnimatePresence>
+                {activeMenuDropdown === 'guide' && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setActiveMenuDropdown(null)} />
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      transition={{ duration: 0.15 }}
+                      className="fixed left-1/2 top-16 z-50 w-[min(1120px,calc(100vw-32px))] -translate-x-1/2 rounded-b-xl border border-slate-200 bg-white p-6 shadow-xl"
+                    >
+                      <div className="grid grid-cols-[0.9fr_1fr_1.35fr] gap-6">
+                        <section>
+                          <h3 className="mb-3 text-base font-bold text-slate-900">Cẩm nang học bổng</h3>
+                          <div className="border-r-2 border-slate-300 pr-6">
+                            {([
+                              ['Lộ trình săn học bổng', Route], ['Thuật ngữ học bổng cần biết', BookOpen], ['So sánh các loại học bổng', ArrowLeftRight], ['Điều kiện tiếng Anh phổ biến', Languages], ['Học bổng cho từng bậc học', GraduationCap], ['Chi phí & tài chính du học', Coins], ['Lịch deadline theo tháng', Calendar],
+                            ] as [string, typeof Route][]).map(([item, Icon]) => (
+                              <button key={item} type="button" onClick={() => { setActiveMenuDropdown(null); triggerFeedback(`Đang mở: ${item}`); }} className="flex w-full items-center gap-3 rounded px-1 py-2 text-left text-sm font-medium text-slate-800 transition-colors hover:bg-[#F4F8FC] hover:text-[#2072E1] hover:underline">
+                                <Icon aria-hidden="true" className="h-5 w-5 shrink-0 text-slate-900" strokeWidth={1.8} />
+                                {item}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                        <section>
+                          <h3 className="mb-3 text-base font-bold text-slate-900">Chuẩn bị hồ sơ</h3>
+                          <div className="border-r-2 border-slate-300 pr-6">
+                            {([
+                              ['Hướng dẫn viết bài luận / SOP', FileText], ['Mẫu CV xin học bổng', FileText], ['Thư giới thiệu: cách xin và mẫu', Mail], ['Chuẩn bị phỏng vấn học bổng', Mic], ['Checklist giấy tờ cần có', CheckCircle2], ['Lỗi thường gặp khi nộp hồ sơ', TriangleAlert], ['Bảng chứng chỉ ngoại ngữ quy đổi', Languages],
+                            ] as [string, typeof Route][]).map(([item, Icon]) => (
+                              <button key={item} type="button" onClick={() => { setActiveMenuDropdown(null); triggerFeedback(`Đang mở: ${item}`); }} className="flex w-full items-center gap-3 rounded px-1 py-2 text-left text-sm font-medium text-slate-800 transition-colors hover:bg-[#F4F8FC] hover:text-[#2072E1] hover:underline">
+                                <Icon aria-hidden="true" className="h-5 w-5 shrink-0 text-slate-900" strokeWidth={1.8} />
+                                {item}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                        <section>
+                          <h3 className="mb-3 text-base font-bold text-slate-900">Bài viết nổi bật</h3>
+                          <div className="space-y-4">
+                            {[
+                              [storyMinhAnh, 'CÂU CHUYỆN', 'Hành trình giành học bổng toàn phần ngành Khoa học dữ liệu tại Hàn Quốc', '5 phút đọc · 12/07/2026'],
+                              [storyTuan, 'KINH NGHIỆM', '7 lỗi khiến hồ sơ học bổng bị loại ngay vòng đầu', '4 phút đọc · 03/07/2026'],
+                            ].map(([image, _category, title, meta]) => (
+                              <button key={title} type="button" onClick={() => { setActiveMenuDropdown(null); triggerFeedback(`Đang mở bài viết: ${title}`); }} className="group flex w-full items-center gap-3 text-left">
+                                <img src={image} alt="" className="h-[76px] w-[116px] shrink-0 rounded-md object-cover" />
+                                <div className="min-w-0">
+                                  <p className="line-clamp-2 text-sm font-semibold leading-snug text-slate-900 group-hover:text-[#2072E1] group-hover:underline">{title}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{meta}</p>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                          <button type="button" onClick={() => { setActiveMenuDropdown(null); triggerFeedback('Đang mở tất cả bài viết nổi bật'); }} className="group mt-4 flex items-center gap-1 text-sm font-semibold text-[#2072E1]">
+                            <span className="group-hover:underline">Xem thêm bài viết nổi bật</span>
+                            <ChevronRight aria-hidden="true" className="h-5 w-5" strokeWidth={1.5} />
+                          </button>
+                        </section>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
+
             {/* 5. Tư vấn */}
             <div className="relative">
               <button 
@@ -502,28 +710,55 @@ export default function App() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 10 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute right-0 md:left-0 mt-2.5 w-56 bg-white rounded-xl border border-slate-100 shadow-xl py-1.5 z-50 origin-top-right md:origin-top-left"
+                      className="fixed left-1/2 top-16 z-50 w-[min(1080px,calc(100vw-32px))] -translate-x-1/2 rounded-b-2xl border border-slate-200 bg-white p-6 shadow-xl"
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveMenuDropdown(null);
-                          triggerFeedback('Yêu cầu đặt lịch Tư vấn 1-1 thành công! Tư vấn viên của TopScholar sẽ liên hệ bạn.');
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs font-normal text-slate-700 hover:bg-[#F4F8FC] hover:text-[#2C6EAF] transition-colors cursor-pointer"
-                      >
-                        Đăng ký Tư vấn 1-1 chuyên sâu
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveMenuDropdown(null);
-                          triggerFeedback('Bắt đầu đánh giá hồ sơ trực tuyến. Vui lòng nhập đầy đủ thông tin GPA & Chứng chỉ ngoại ngữ!');
-                        }}
-                        className="w-full text-left px-4 py-2 text-xs font-normal text-slate-700 hover:bg-[#F4F8FC] hover:text-[#2C6EAF] transition-colors cursor-pointer"
-                      >
-                        Đánh giá năng lực hồ sơ (AI)
-                      </button>
+                      <div className="grid grid-cols-[1.18fr_0.92fr_0.9fr] gap-8">
+                        <section>
+                          <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.12em] text-slate-900">Dịch vụ tư vấn</h3>
+                          <div className="space-y-3">
+                            {[
+                              ['Tư vấn 1-1 với chuyên gia', 'Chọn khung giờ phù hợp, trao đổi trực tiếp về định hướng của bạn.', consultingExpert],
+                              ['Review hồ sơ & bài luận', 'Nhận nhận xét chi tiết từng phần, kèm gợi ý chỉnh sửa cụ thể.', consultingReview],
+                              ['Luyện phỏng vấn học bổng', 'Phỏng vấn thử với cựu du học sinh, nhận xét ngay sau buổi.', consultingInterview],
+                            ].map(([title, description, image]) => (
+                              <button key={title} type="button" onClick={() => { setActiveMenuDropdown(null); setShowAuthModal(true); }} className="flex w-full items-start gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-slate-900">
+                                <img src={image} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" />
+                                <span className="min-w-0">
+                                  <span className="block text-base font-semibold text-slate-900">{title}</span>
+                                  <span className="mt-1 block text-sm leading-5 text-slate-700">{description}</span>
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+
+                        <section>
+                          <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Hỗ trợ & giải đáp</h3>
+                          <div className="space-y-1">
+                            {([
+                              ['Câu hỏi thường gặp', HelpCircle], ['Hỏi đáp cộng đồng', MessagesSquare], ['Hướng dẫn sử dụng', FileText], ['Tra cứu trạng thái hồ sơ', BookOpen], ['Báo lỗi & góp ý', TriangleAlert], ['Chính sách hoàn phí', HelpCircle],
+                            ] as [string, typeof Route][]).map(([item, Icon]) => (
+                              <button key={item} type="button" onClick={() => { setActiveMenuDropdown(null); triggerFeedback(`Đang mở: ${item}`); }} className="flex w-full items-center gap-3 rounded px-1 py-2.5 text-left text-sm text-slate-700 transition-colors hover:text-[#2072E1] hover:underline">
+                                <Icon className="h-5 w-5 shrink-0 text-slate-900" strokeWidth={1.7} />
+                                {item}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="mt-5 border-t border-slate-200 pt-4 text-sm text-slate-600">
+                            <p className="mb-3 font-semibold text-slate-900">Liên hệ</p>
+                            <p className="flex items-center gap-2"><Phone className="h-4 w-4 text-slate-900" /> <strong className="text-slate-900">1900 6868</strong> · 8:00–21:00</p>
+                            <p className="mt-3 flex items-center gap-2"><Mail className="h-4 w-4 text-slate-900" /> tuvan@topscholar.vn</p>
+                          </div>
+                        </section>
+
+                        <aside className="rounded-2xl bg-cover bg-center p-7" style={{ backgroundImage: `url(${consultingCtaBackground})` }}>
+                          <h3 className="text-2xl font-bold leading-tight text-[#4A2B15]">Nói chuyện với người đi trước</h3>
+                          <p className="mt-4 text-sm leading-6 text-[#925A26]">Đặt lịch 30 phút với chuyên gia để gỡ đúng vướng mắc của bạn.</p>
+                          <button type="button" onClick={() => { setActiveMenuDropdown(null); setShowAuthModal(true); }} className="mt-20 inline-flex items-center gap-2 rounded border-2 border-slate-900 bg-[#E8F6FF] px-6 py-3 text-sm font-bold text-slate-900 transition-transform hover:-translate-y-0.5">
+                            Đặt lịch ngay <ArrowRight className="h-4 w-4" />
+                          </button>
+                        </aside>
+                      </div>
                     </motion.div>
                   </>
                 )}
@@ -535,46 +770,6 @@ export default function App() {
           {/* Right Header Controls (Right-aligned personal items group) */}
           <div className="flex items-center gap-3 shrink-0">
             
-            {/* Yêu thích (icon trái tim ❤️) */}
-            <button 
-              type="button"
-              onClick={() => setActiveTab('saved')}
-              className={`p-2 rounded-full border transition-all cursor-pointer relative ${
-                activeTab === 'saved'
-                  ? 'bg-[#F4F8FC] border-[#DCEAF6] text-[#2C6EAF]'
-                  : 'bg-white border-slate-200 text-slate-500 hover:text-[#2C6EAF] hover:bg-slate-50'
-              }`}
-              title="Học bổng yêu thích"
-              id="nav-tab-saved"
-            >
-              <Heart className={`w-5 h-5 ${savedScholarshipIds.length > 0 ? 'fill-[#2C6EAF] text-[#2C6EAF]' : ''}`} />
-              {savedScholarshipIds.length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-[#2C6EAF] text-white text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center font-bold leading-none">
-                  {savedScholarshipIds.length}
-                </span>
-              )}
-            </button>
-
-            {/* Hồ sơ (icon file) */}
-            <button 
-              type="button"
-              onClick={() => setActiveTab('applications')}
-              className={`p-2 rounded-full border transition-all cursor-pointer relative ${
-                activeTab === 'applications'
-                  ? 'bg-[#F4F8FC] border-[#DCEAF6] text-[#2C6EAF]'
-                  : 'bg-white border-slate-200 text-slate-500 hover:text-[#2C6EAF] hover:bg-slate-50'
-              }`}
-              title="Hồ sơ ứng tuyển"
-              id="nav-tab-applications"
-            >
-              <FileText className="w-5 h-5" />
-              {appliedScholarships.length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-[#2C6EAF] text-white text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center font-bold leading-none">
-                  {appliedScholarships.length}
-                </span>
-              )}
-            </button>
-            
             {/* Account dropdown */}
             <div className="relative z-50 flex items-center" id="account-dropdown-container">
               <button
@@ -583,27 +778,35 @@ export default function App() {
                     setShowAccountDropdown(!showAccountDropdown);
                   } else {
                     setShowAccountDropdown(false);
+                    setAuthPresentation('panel');
                     setAuthMode('login');
                     setShowAuthModal(true);
                   }
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-slate-50 border border-slate-200/80 transition-all cursor-pointer focus:outline-none"
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-all cursor-pointer focus:outline-none ${
+                  currentUser
+                    ? 'rounded-full border border-slate-200/80 hover:bg-slate-50'
+                    : 'rounded-md text-[#0B63CE] hover:bg-blue-50'
+                }`}
                 id="btn-account-toggle"
               >
                 {currentUser ? (
-                  <img
-                    src={currentUser.avatar}
-                    alt={currentUser.name}
-                    referrerPolicy="no-referrer"
-                    className="w-5.5 h-5.5 rounded-full object-cover border border-slate-100"
-                  />
+                  <>
+                    <img
+                      src={currentUser.avatar}
+                      alt={currentUser.name}
+                      referrerPolicy="no-referrer"
+                      className="w-5.5 h-5.5 rounded-full object-cover border border-slate-100"
+                    />
+                    <span className="text-xs font-bold text-slate-800">{currentUser.name}</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  </>
                 ) : (
-                  <User className="w-4 h-4 text-slate-500 shrink-0" />
+                  <>
+                    <span className="text-sm font-medium">Đăng nhập</span>
+                    <User className="w-[18px] h-[18px] shrink-0" strokeWidth={1.5} />
+                  </>
                 )}
-                <span className="text-xs font-bold text-slate-800">
-                  {currentUser ? currentUser.name : 'Tài khoản'}
-                </span>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
               </button>
 
               <AnimatePresence>
@@ -728,6 +931,21 @@ export default function App() {
 
           </div>
         </div>
+        {mobileMenuOpen && (
+          <nav className="border-t border-slate-100 bg-white px-4 py-3 shadow-lg md:hidden" aria-label="Điều hướng trên thiết bị nhỏ">
+            {[
+              ['Chọn trường & Ngành học', 'schools_majors'],
+              ['Học bổng', 'funding'],
+              ['Đánh giá hồ sơ', 'apply'],
+              ['Cẩm nang', 'guide'],
+              ['Tư vấn', 'advising']
+            ].map(([label, menu]) => (
+              <button key={menu} type="button" onClick={() => { setMobileMenuOpen(false); setActiveMenuDropdown(menu as typeof activeMenuDropdown); }} className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50">
+                {label}<ChevronRight className="h-4 w-4 text-slate-500" />
+              </button>
+            ))}
+          </nav>
+        )}
       </header>
 
       {/* Hero Search Section - Rendered on Home & Search for consistency */}
@@ -735,13 +953,16 @@ export default function App() {
         className={
           activeTab === 'filter'
             ? 'border-b border-[#DCEAF6] bg-[#2C6EAF] py-2 md:py-2 relative overflow-hidden'
-            : 'min-h-[300px] pt-16 pb-20 md:min-h-[340px] md:pt-[96px] md:pb-24 text-white relative overflow-hidden bg-cover bg-center'
+            : 'min-h-[300px] pt-16 pb-20 md:min-h-[340px] md:pt-[96px] md:pb-24 text-white relative overflow-hidden bg-gradient-to-r from-[#48B6F8] via-[#43AFF5] to-[#38A5EF]'
         }
-        style={activeTab === 'filter' ? undefined : { backgroundImage: `url(${heroBackground})` }}
         id="hero-search-area"
       >
         {activeTab !== 'filter' && (
-          <div className="absolute inset-0 opacity-[0.08] bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]"></div>
+          <>
+            <div className="absolute -top-28 left-[34%] h-[520px] w-64 -rotate-12 bg-white/10"></div>
+            <div className="absolute -right-28 top-12 h-72 w-72 rounded-full border-[58px] border-white/90"></div>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_8%_12%,rgba(255,255,255,0.16),transparent_30%)]"></div>
+          </>
         )}
         <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 flex justify-center ${activeTab === 'filter' ? '' : 'md:justify-end'}`}>
           <div className={`w-full text-center ${activeTab === 'filter' ? 'max-w-[1000px]' : 'max-w-[620px] md:mr-32'}`}>
@@ -790,16 +1011,69 @@ export default function App() {
             </div>
 
           </form>
+
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1.5fr_1fr_1fr] sm:gap-3" id="hero-search-filters">
+            <label className="relative block">
+              <span className="sr-only">Ngành học</span>
+              <select
+                value={heroMajor}
+                onChange={(e) => setHeroMajor(e.target.value)}
+                className="h-8 w-full appearance-none rounded-[9px] bg-white px-3 pr-9 text-[12px] text-slate-700 shadow-md shadow-[#12385D]/20 outline-none"
+                id="hero-search-major"
+              >
+                <option value="">Ngành học</option>
+                <option value="Công nghệ thông tin">Công nghệ thông tin</option>
+                <option value="Kinh tế">Kinh tế</option>
+                <option value="Y dược">Y dược</option>
+                <option value="Ngôn ngữ">Ngôn ngữ</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
+            </label>
+            <label className="relative block">
+              <span className="sr-only">Khu vực</span>
+              <select
+                value={heroRegion}
+                onChange={(e) => setHeroRegion(e.target.value)}
+                className="h-8 w-full appearance-none rounded-[9px] bg-white px-3 pr-9 text-[12px] text-slate-700 shadow-md shadow-[#12385D]/20 outline-none"
+                id="hero-search-region"
+              >
+                <option value="">Khu vực</option>
+                <option value="Miền Bắc">Miền Bắc</option>
+                <option value="Miền Trung">Miền Trung</option>
+                <option value="Miền Nam">Miền Nam</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
+            </label>
+            <label className="relative block">
+              <span className="sr-only">Loại học bổng</span>
+              <select
+                value={heroScholarshipType}
+                onChange={(e) => setHeroScholarshipType(e.target.value)}
+                className="h-8 w-full appearance-none rounded-[9px] bg-white px-3 pr-9 text-[12px] text-slate-700 shadow-md shadow-[#12385D]/20 outline-none"
+                id="hero-search-scholarship-type"
+              >
+                <option value="">Loại học bổng</option>
+                <option value="Toàn phần">Toàn phần</option>
+                <option value="Bán phần">Bán phần</option>
+                <option value="Tài trợ doanh nghiệp">Tài trợ doanh nghiệp</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
+            </label>
+          </div>
           </div>
 
         </div>
       </section>
+
+      {activeTab === 'home' && <StatsBar />}
 
       {/* MAIN LAYOUT CONDITIONAL RENDERING */}
       <main className="flex-1" id="main-content-layout">
         
         {activeTab === 'home' && (
           <div className="flex flex-col gap-14 py-10" id="view-home">
+
+            <ScholarshipPartnersCarousel />
 
             {/* Custom Filter Bar + Scholarship List Grid */}
             <section className="w-full bg-[#F8FAFC] border-y border-slate-200/60 py-12" id="home-scholarships-full-section">
@@ -810,6 +1084,8 @@ export default function App() {
                 />
               </div>
             </section>
+
+            <GreenBadgePromo onExplore={openScholarshipFilterPage} />
 
             {/* Informational Link Section */}
             <section className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pb-6" id="section-by-major">
@@ -852,11 +1128,27 @@ export default function App() {
               </div>
             </section>
 
+            <ReasonsSection
+              onCreateProfile={() => {
+                setAuthMode('register');
+                setShowAuthModal(true);
+              }}
+            />
+
+            <SuccessStories
+              onExplore={() => {
+                setAuthMode('register');
+                setShowAuthModal(true);
+              }}
+            />
+
+            <PartnersSection />
+
           </div>
         )}
 
         {activeTab === 'filter' && (
-          <ScholarshipFilterPage />
+          <ScholarshipFilterPage searchRequest={filterSearchRequest} onFeedback={triggerFeedback} />
         )}
 
         {activeTab === 'saved' && (
@@ -1066,83 +1358,7 @@ export default function App() {
 
       </main>
 
-      {/* Trust Partnership Section */}
-      <section className="bg-[#F4F8FC] border-t border-slate-100 py-10" id="partnerships-section">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <p className="text-[10px] text-[#12385D] font-bold uppercase tracking-widest mb-4">Các Tổ Chức & Đại Học Đồng Hành Cung Cấp Học Bổng</p>
-          <div className="flex flex-wrap items-center justify-center gap-y-4 gap-x-8 md:gap-x-12 opacity-80 grayscale hover:grayscale-0 transition-all duration-300">
-            <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">🇺🇸 Fulbright Commission</span>
-            <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">🇯🇵 MEXT Japan</span>
-            <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">🇬🇧 British Council</span>
-            <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">🇮🇪 Irish Aid</span>
-            <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">🇪🇺 Erasmus+ EU</span>
-            <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">🇻🇳 VinUniversity</span>
-          </div>
-        </div>
-      </section>
-
-      {/* Modern Detailed Footer */}
-      <footer className="bg-[#00446B] text-slate-200 border-t border-[#2C6EAF]/20 py-12" id="site-footer">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-white/10">
-            
-            {/* Column 1 */}
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-lg bg-[#2C6EAF] flex items-center justify-center text-white shrink-0">
-                  <GraduationCap className="w-5 h-5" />
-                </div>
-                <span className="font-sans font-bold text-white text-base">TopScholar</span>
-              </div>
-              <p className="text-xs leading-relaxed text-slate-500">
-                Hệ thống tìm kiếm, kết nối và nộp hồ sơ xét tuyển học bổng trực tuyến chính quy, bảo vệ quyền lợi của sĩ tử Việt Nam.
-              </p>
-            </div>
-
-            {/* Column 2 */}
-            <div>
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider mb-3">Chương trình hot</h4>
-              <ul className="flex flex-col gap-2 text-xs">
-                <li className="hover:text-white cursor-pointer" onClick={() => handleCountryCardClick('Đại học Kinh tế TP.HCM', 'Miền Nam')}>Học bổng UEH Excellence</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => handleCountryCardClick('Đại học Bách khoa Hà Nội', 'Miền Bắc')}>Học bổng Tài năng HUST</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => handleCountryCardClick('Đại học Ngoại thương', 'Miền Bắc')}>Học bổng Ngoại thương FTU</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => handleCountryCardClick('VinUniversity', 'Miền Bắc')}>Học bổng Tài năng VinUni</li>
-              </ul>
-            </div>
-
-            {/* Column 3 */}
-            <div>
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider mb-3">Tài liệu tham khảo</h4>
-              <ul className="flex flex-col gap-2 text-xs">
-                <li className="hover:text-white cursor-pointer" onClick={() => handlePlaceholderAlert('Cẩm nang viết bài luận cá nhân')}>Cách viết bài luận cá nhân hiệu quả</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => handlePlaceholderAlert('Bí quyết phỏng vấn Đại sứ quán')}>Bí quyết phỏng vấn Đại sứ quán</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => handlePlaceholderAlert('Quy đổi điểm hệ GPA')}>Bảng quy đổi điểm GPA chuẩn</li>
-                <li className="hover:text-white cursor-pointer" onClick={() => handlePlaceholderAlert('Tìm kiếm thư giới thiệu')}>Xin thư giới thiệu tinh tế</li>
-              </ul>
-            </div>
-
-            {/* Column 4 */}
-            <div className="flex flex-col gap-3">
-              <h4 className="text-white text-xs font-bold uppercase tracking-wider mb-1">Kết nối với chúng tôi</h4>
-              <p className="text-xs text-slate-500">Hỗ trợ khẩn cấp sĩ tử 24/7 từ ban cố vấn học thuật.</p>
-              <div className="flex flex-col gap-2 text-xs">
-                <span className="flex items-center gap-1.5"><Phone className="w-3.5 h-3.5 text-[#2C6EAF]" /> Đường dây nóng: 1900 6725</span>
-                <span className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-[#2C6EAF]" /> Hỗ trợ: scholarship@topcv-style.vn</span>
-                <span className="flex items-center gap-1.5"><Map className="w-3.5 h-3.5 text-[#2C6EAF]" /> Tòa nhà TopCV, Cầu Giấy, Hà Nội</span>
-              </div>
-            </div>
-
-          </div>
-
-          <div className="pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-            <p>© 2026 Nền tảng TopScholar. Hệ thống đồng hành học bổng uy tín phong cách TopCV. Phát triển bằng công cụ dựng giao diện.</p>
-            <div className="flex gap-4">
-              <span className="hover:text-white cursor-pointer">Chính sách bảo mật</span>
-              <span className="hover:text-white cursor-pointer">Điều khoản sử dụng</span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <FooterBackground />
 
       {/* Detailed Info Modal & Online Application Portal overlay */}
       <AnimatePresence>
@@ -1161,7 +1377,11 @@ export default function App() {
         {showAuthModal && (
           <AuthModal
             initialMode={authMode}
-            onClose={() => setShowAuthModal(false)}
+            presentation={authPresentation}
+            onClose={() => {
+              setShowAuthModal(false);
+              setAuthPresentation('modal');
+            }}
             onAuthenticated={handleAuthSuccess}
           />
         )}

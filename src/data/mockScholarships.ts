@@ -46,7 +46,7 @@ const VNUA_LOGO = '/images/Hoc_Vien_Nong_Nghiep_Viet_Nam.webp';
 const VNUA_SPONSOR = 'Học viện Nông nghiệp Việt Nam';
 
 const scholarshipSeed = [
-  ['sch-vnua-01', 'Ươm mầm tài năng Nông nghiệp Công nghệ cao', 'Toàn phần', '2026-07-15'],
+  ['sch-vnua-01', 'Nông nghiệp công nghệ cao', 'Toàn phần', '2026-07-15'],
   ['sch-vnua-02', 'Nhà khoa học trẻ Nông nghiệp số', 'Toàn phần', '2026-07-22'],
   ['sch-vnua-03', 'Kỹ sư Nông nghiệp bền vững', 'Toàn phần', '2026-08-05'],
   ['sch-vnua-04', 'Đổi mới sáng tạo trong Chăn nuôi', 'Toàn phần', '2026-08-18'],

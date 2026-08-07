@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
@@ -46,6 +46,67 @@ interface FilterState {
   universities: string[];
   durations: string[];
 }
+
+export interface ScholarshipSearchRequest {
+  keyword?: string;
+  level?: string;
+  major?: string;
+  region?: string;
+  scholarshipType?: string;
+}
+
+interface ScholarshipFilterPageProps {
+  searchRequest?: ScholarshipSearchRequest;
+  onFeedback?: (message: string) => void;
+}
+
+interface ProgramResult {
+  id: string;
+  initials: string;
+  university: string;
+  location: string;
+  rating: string;
+  reviews: number;
+  title: string;
+  level: string;
+  description: string;
+  duration: string;
+  tuition: string;
+  intake: string;
+  requirements: string[];
+  scholarships: string;
+}
+
+const PROGRAM_RESULTS: ProgramResult[] = [
+  {
+    id: 'ptit-data-science', initials: 'PT', university: 'Học viện Công nghệ Bưu chính Viễn thông', location: 'Hà Nội, Việt Nam', rating: '4.6', reviews: 128,
+    title: 'Thạc sĩ Khoa học dữ liệu', level: 'Thạc sĩ',
+    description: 'Chương trình tập trung vào phân tích dữ liệu, trí tuệ nhân tạo và các dự án ứng dụng cùng doanh nghiệp công nghệ.',
+    duration: '2 năm · Bán thời gian', tuition: '42 triệu đồng / năm', intake: 'Tháng 9/2026',
+    requirements: ['Tốt nghiệp đại học', 'GPA từ 2.5/4.0', 'Tiếng Anh B1'], scholarships: '8 học bổng áp dụng cho chương trình này'
+  },
+  {
+    id: 'neu-business', initials: 'NE', university: 'Đại học Kinh tế Quốc dân', location: 'Hà Nội, Việt Nam', rating: '4.5', reviews: 94,
+    title: 'Cử nhân Quản trị Kinh doanh', level: 'Cử nhân',
+    description: 'Trang bị kiến thức quản trị hiện đại, kỹ năng lãnh đạo và cơ hội thực tập tại mạng lưới doanh nghiệp đối tác.',
+    duration: '4 năm · Toàn thời gian', tuition: '36 triệu đồng / năm', intake: 'Tháng 9/2026',
+    requirements: ['Tốt nghiệp THPT', 'Điểm xét tuyển phù hợp', 'Tiếng Anh đầu vào'], scholarships: '12 học bổng áp dụng cho chương trình này'
+  },
+  {
+    id: 'hust-it', initials: 'BK', university: 'Đại học Bách khoa Hà Nội', location: 'Hà Nội, Việt Nam', rating: '4.7', reviews: 156,
+    title: 'Thạc sĩ Công nghệ thông tin', level: 'Thạc sĩ',
+    description: 'Chương trình nâng cao dành cho người học muốn phát triển chuyên môn về kỹ thuật phần mềm và hệ thống thông minh.',
+    duration: '2 năm · Toàn thời gian', tuition: '48 triệu đồng / năm', intake: 'Tháng 2/2027',
+    requirements: ['Tốt nghiệp ngành phù hợp', 'GPA từ 2.8/4.0', 'Phỏng vấn đầu vào'], scholarships: '6 học bổng áp dụng cho chương trình này'
+  },
+  {
+    id: 'fpt-design', initials: 'FU', university: 'Đại học FPT', location: 'Hà Nội, Việt Nam', rating: '4.4', reviews: 83,
+    title: 'Cử nhân Thiết kế đồ họa', level: 'Cử nhân',
+    description: 'Học theo dự án thực tế, phát triển tư duy thiết kế và xây dựng hồ sơ năng lực cho ngành công nghiệp sáng tạo.',
+    duration: '4 năm · Toàn thời gian', tuition: '58 triệu đồng / năm', intake: 'Tháng 9/2026',
+    requirements: ['Tốt nghiệp THPT', 'Portfolio hoặc bài thi năng khiếu', 'Phỏng vấn'], scholarships: '10 học bổng áp dụng cho chương trình này'
+  }
+];
 
 const COUNTRIES = ['Hoa Kỳ', 'Anh Quốc', 'Úc', 'Singapore', 'Canada', 'Nhật Bản', 'Đức', 'Hà Lan'];
 
@@ -237,6 +298,73 @@ const emptyFilters: FilterState = {
   durations: []
 };
 
+const HERO_LEVEL_MAP: Record<string, string> = {
+  'Đại học': 'Cử nhân',
+  'Thạc sĩ': 'Thạc sĩ',
+  'Tiến sĩ': 'Tiến sĩ'
+};
+
+const HERO_MAJOR_MAP: Record<string, string> = {
+  'Công nghệ thông tin': 'Công nghệ thông tin & Khoa học máy tính',
+  'Kinh tế': 'Kinh doanh & Quản lý',
+  'Y dược': 'Y tế & Y sinh',
+  'Ngôn ngữ': 'Khoa học xã hội & Nhân văn'
+};
+
+const HERO_SUPPORT_MAP: Record<string, SupportType> = {
+  'Toàn phần': 'toan_phan',
+  'Bán phần': 'ban_phan',
+  'Tài trợ doanh nghiệp': 'gia_tri_cu_the'
+};
+
+function searchRequestToFilters(request?: ScholarshipSearchRequest): FilterState {
+  if (!request) return emptyFilters;
+
+  return {
+    ...emptyFilters,
+    searchQuery: request.keyword?.trim() || '',
+    fieldsOfStudy: request.major && HERO_MAJOR_MAP[request.major] ? [HERO_MAJOR_MAP[request.major]] : [],
+    levels: request.level && HERO_LEVEL_MAP[request.level] ? [HERO_LEVEL_MAP[request.level]] : [],
+    financialSupportTypes: request.scholarshipType && HERO_SUPPORT_MAP[request.scholarshipType]
+      ? [HERO_SUPPORT_MAP[request.scholarshipType]]
+      : []
+  };
+}
+
+function filtersToSearchParams(filters: FilterState, activeTab: ResultsTab, sortBy: string) {
+  const params = new URLSearchParams();
+  if (filters.searchQuery) params.set('q', filters.searchQuery);
+  if (filters.fieldsOfStudy.length) params.set('field', filters.fieldsOfStudy.join(','));
+  if (filters.countries.length) params.set('country', filters.countries.join(','));
+  if (filters.financialSupportTypes.length) params.set('support', filters.financialSupportTypes.join(','));
+  if (filters.levels.length) params.set('level', filters.levels.join(','));
+  if (filters.minGpa > 0) params.set('gpa', String(filters.minGpa));
+  if (filters.minIelts > 0) params.set('ielts', String(filters.minIelts));
+  if (activeTab !== 'scholarships') params.set('tab', activeTab);
+  if (sortBy !== 'default') params.set('sort', sortBy);
+  return params;
+}
+
+function filtersFromSearchParams(): { filters: FilterState; activeTab: ResultsTab; sortBy: string } {
+  const params = new URLSearchParams(window.location.search);
+  const split = (key: string) => params.get(key)?.split(',').filter(Boolean) || [];
+  const tab = params.get('tab');
+  return {
+    filters: {
+      ...emptyFilters,
+      searchQuery: params.get('q') || '',
+      fieldsOfStudy: split('field').filter((item) => FIELDS_OF_STUDY.includes(item)),
+      countries: split('country').filter((item) => COUNTRIES.includes(item)),
+      financialSupportTypes: split('support').filter((item) => FINANCIAL_SUPPORT_TYPES.some((support) => support.key === item)),
+      levels: split('level').filter((item) => LEVELS.includes(item)),
+      minGpa: Number(params.get('gpa')) || 0,
+      minIelts: Number(params.get('ielts')) || 0
+    },
+    activeTab: tab === 'universities' || tab === 'programs' ? tab : 'scholarships',
+    sortBy: params.get('sort') || 'default'
+  };
+}
+
 function parseDate(dateStr: string) {
   const [day, month, year] = dateStr.split('/').map(Number);
   return new Date(year, month - 1, day).getTime();
@@ -426,7 +554,7 @@ function ResultTabs({
   ];
 
   return (
-    <div className="flex gap-6 text-sm font-bold">
+    <div className="flex max-w-full gap-4 overflow-x-auto pb-1 text-sm font-normal sm:gap-6 sm:text-base">
       {tabs.map((tab) => (
         <button
           key={tab.key}
@@ -434,8 +562,8 @@ function ResultTabs({
           onClick={() => onChange(tab.key)}
           className={
             activeTab === tab.key
-              ? 'border-b-2 border-blue-700 px-1 pb-3 text-blue-700'
-              : 'px-1 pb-3 text-slate-500 transition-colors hover:text-slate-800'
+              ? 'shrink-0 whitespace-nowrap border-b-2 border-blue-700 px-1 pb-3 font-bold text-blue-700'
+              : 'shrink-0 whitespace-nowrap px-1 pb-3 text-slate-500 transition-colors hover:text-slate-800'
           }
         >
           {tab.label}
@@ -474,6 +602,54 @@ function ResultsToolbar({
   );
 }
 
+function ProgramResultCard({ program }: { program: ProgramResult }) {
+  return (
+    <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#EEF6FF] text-xs font-bold text-[#2072E1]">{program.initials}</span>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-900">{program.university} <span className="ml-1 text-xs text-amber-500">★</span> <span className="text-xs font-medium text-slate-600">{program.rating} ({program.reviews})</span></p>
+            <p className="mt-1 text-xs text-slate-500">{program.location}</p>
+          </div>
+        </div>
+        <button type="button" className="rounded-lg bg-[#F0F7FF] px-3 py-2 text-xs font-medium text-[#2072E1]">% Kiểm tra độ phù hợp</button>
+      </div>
+
+      <div className="mt-5 flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-bold text-slate-900">{program.title} <span className="ml-2 rounded bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700">{program.level}</span></h3>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">{program.description}</p>
+        </div>
+        <Heart className="h-6 w-6 shrink-0 text-slate-400" strokeWidth={1.6} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200 sm:grid-cols-4">
+        {[
+          ['Cấp bằng', program.level], ['Thời lượng', program.duration], ['Học phí / năm', program.tuition], ['Kỳ nhập học', program.intake],
+        ].map(([label, value]) => (
+          <div key={label} className="border-b border-slate-200 p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+            <p className="text-xs text-slate-400">{label}</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {program.requirements.map((item) => <span key={item} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs text-slate-600">{item}</span>)}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
+        <span className="text-xs font-medium text-emerald-700">♙ {program.scholarships}</span>
+        <button type="button" className="group inline-flex items-center gap-1 text-xs font-bold text-[#2072E1]">
+          <span className="group-hover:underline">Xem chi tiết thông tin chương trình</span>
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function ActiveFilterTag({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
     <span className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white py-1 pl-2.5 pr-1.5 text-xs font-medium text-slate-700 shadow-2xs">
@@ -488,11 +664,15 @@ function ActiveFilterTag({ label, onRemove }: { label: string; onRemove: () => v
 function ResultCard({
   scholarship,
   isFavorite,
-  onToggleFavorite
+  onToggleFavorite,
+  onViewDetails,
+  onCheckFit
 }: {
   scholarship: FilterScholarship;
   isFavorite: boolean;
   onToggleFavorite: (id: string) => void;
+  onViewDetails: (scholarship: FilterScholarship) => void;
+  onCheckFit: (scholarship: FilterScholarship) => void;
 }) {
   return (
     <article className="relative rounded-md border border-slate-200 bg-white p-5 transition-all hover:shadow-md md:p-6">
@@ -514,7 +694,7 @@ function ResultCard({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <button type="button" className="hidden rounded-sm bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 sm:flex">
+          <button type="button" onClick={() => onCheckFit(scholarship)} className="hidden rounded-sm bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 sm:flex">
             % Kiểm tra độ phù hợp
           </button>
           <button
@@ -528,7 +708,7 @@ function ResultCard({
         </div>
       </div>
 
-      <h3 className="mt-4 cursor-pointer text-base font-bold leading-snug text-slate-900 transition-colors hover:text-blue-600 md:text-lg">
+      <h3 className="mt-4 text-base font-bold leading-snug text-slate-900 md:text-lg">
         {scholarship.title}
       </h3>
       <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500 md:text-sm">{scholarship.description}</p>
@@ -546,8 +726,8 @@ function ResultCard({
             <span className="mx-1.5">•</span>
             <span className="font-bold text-slate-900">{scholarship.financialSupportValue}</span>
           </div>
-          <button type="button" className="shrink-0 text-xs font-bold text-blue-600 transition-colors hover:text-blue-700 hover:underline">
-            Xem thông tin chương trình
+          <button type="button" onClick={() => onViewDetails(scholarship)} className="shrink-0 text-xs font-bold text-blue-600 transition-colors hover:text-blue-700 hover:underline">
+            Xem thông tin học bổng
           </button>
         </div>
       </div>
@@ -555,12 +735,37 @@ function ResultCard({
   );
 }
 
-export default function ScholarshipFilterPage() {
-  const [filters, setFilters] = useState<FilterState>(emptyFilters);
-  const [sortBy, setSortBy] = useState('default');
-  const [favorites, setFavorites] = useState<string[]>([]);
+export default function ScholarshipFilterPage({ searchRequest, onFeedback }: ScholarshipFilterPageProps) {
+  const initialPageState = useMemo(() => filtersFromSearchParams(), []);
+  const [filters, setFilters] = useState<FilterState>(initialPageState.filters);
+  const [sortBy, setSortBy] = useState(initialPageState.sortBy);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    const stored = localStorage.getItem('scholarship_saved_ids');
+    return stored ? JSON.parse(stored) : [];
+  });
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const [activeResultsTab, setActiveResultsTab] = useState<ResultsTab>('universities');
+  const [activeResultsTab, setActiveResultsTab] = useState<ResultsTab>(initialPageState.activeTab);
+  const [selectedScholarship, setSelectedScholarship] = useState<FilterScholarship | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 3;
+
+  useEffect(() => {
+    if (searchRequest) setFilters(searchRequestToFilters(searchRequest));
+  }, [searchRequest]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters, activeResultsTab, sortBy]);
+
+  useEffect(() => {
+    localStorage.setItem('scholarship_saved_ids', JSON.stringify(favorites));
+  }, [favorites]);
+
+  useEffect(() => {
+    const params = filtersToSearchParams(filters, activeResultsTab, sortBy);
+    const query = params.toString();
+    window.history.replaceState({}, '', `/hoc-bong${query ? `?${query}` : ''}`);
+  }, [filters, activeResultsTab, sortBy]);
 
   const filteredScholarships = useMemo(() => {
     return FILTER_SCHOLARSHIPS.filter((scholarship) => {
@@ -598,6 +803,9 @@ export default function ScholarshipFilterPage() {
     filters.universities.length +
     filters.durations.length;
 
+  const pageCount = Math.max(1, Math.ceil(filteredScholarships.length / pageSize));
+  const paginatedScholarships = filteredScholarships.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   const removeFilterTag = (type: keyof FilterState, value?: string) => {
     setFilters((prev) => {
       if (type === 'searchQuery') return { ...prev, searchQuery: '' };
@@ -607,9 +815,9 @@ export default function ScholarshipFilterPage() {
   };
 
   const supportLabel = (key: string) => FINANCIAL_SUPPORT_TYPES.find((item) => item.key === key)?.label || key;
-  const totalScholarships = filteredScholarships.length * 123;
-  const categoryName = 'Kinh doanh & Quản lý';
-  const lastUpdated = '05/07/2026';
+  const totalScholarships = filteredScholarships.length;
+  const categoryName = filters.fieldsOfStudy[0] || 'tất cả ngành học';
+  const lastUpdated = new Intl.DateTimeFormat('vi-VN').format(new Date());
 
   return (
     <section className="min-h-[600px] bg-[#F0F1F3] py-8" id="integrated-scholarship-filter-page">
@@ -657,6 +865,8 @@ export default function ScholarshipFilterPage() {
                 {filters.countries.map((item) => <ActiveFilterTag key={item} label={item} onRemove={() => removeFilterTag('countries', item)} />)}
                 {filters.financialSupportTypes.map((item) => <ActiveFilterTag key={item} label={supportLabel(item)} onRemove={() => removeFilterTag('financialSupportTypes', item)} />)}
                 {filters.levels.map((item) => <ActiveFilterTag key={item} label={item} onRemove={() => removeFilterTag('levels', item)} />)}
+                {filters.universities.map((item) => <ActiveFilterTag key={item} label={item} onRemove={() => removeFilterTag('universities', item)} />)}
+                {filters.durations.map((item) => <ActiveFilterTag key={item} label={item} onRemove={() => removeFilterTag('durations', item)} />)}
                 {filters.minGpa > 0 && <ActiveFilterTag label={`GPA ≥ ${filters.minGpa.toFixed(1)}`} onRemove={() => removeFilterTag('minGpa')} />}
                 {filters.minIelts > 0 && <ActiveFilterTag label={`IELTS ≥ ${filters.minIelts}`} onRemove={() => removeFilterTag('minIelts')} />}
                 <button type="button" onClick={() => setFilters(emptyFilters)} className="ml-auto text-xs font-bold text-blue-600 hover:underline">
@@ -671,13 +881,7 @@ export default function ScholarshipFilterPage() {
                   <UniversityCard key={university.universityName} {...university} />
                 ))
               ) : activeResultsTab === 'programs' ? (
-                <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-white p-12 text-center shadow-xs">
-                  <Search className="mb-3 h-12 w-12 text-slate-300" />
-                  <h3 className="text-base font-bold text-slate-800">Chưa có chương trình phù hợp</h3>
-                  <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-slate-400">
-                    Nội dung chương trình sẽ được bổ sung sau.
-                  </p>
-                </div>
+                PROGRAM_RESULTS.map((program) => <ProgramResultCard key={program.id} program={program} />)
               ) : filteredScholarships.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-xl border border-slate-100 bg-white p-12 text-center shadow-xs">
                   <Search className="mb-3 h-12 w-12 text-slate-300" />
@@ -694,35 +898,41 @@ export default function ScholarshipFilterPage() {
                   </button>
                 </div>
               ) : (
-                filteredScholarships.map((scholarship) => (
+                paginatedScholarships.map((scholarship) => (
                   <ResultCard
                     key={scholarship.id}
                     scholarship={scholarship}
                     isFavorite={favorites.includes(scholarship.id)}
                     onToggleFavorite={(id) =>
-                      setFavorites((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+                      setFavorites((prev) => {
+                        const isSaved = prev.includes(id);
+                        onFeedback?.(isSaved ? 'Đã bỏ lưu học bổng.' : 'Đã lưu học bổng vào danh sách quan tâm.');
+                        return isSaved ? prev.filter((item) => item !== id) : [...prev, id];
+                      })
                     }
+                    onViewDetails={setSelectedScholarship}
+                    onCheckFit={(scholarship) => onFeedback?.(`Bạn có thể bắt đầu kiểm tra độ phù hợp cho “${scholarship.title}”.`)}
                   />
                 ))
               )}
             </div>
 
-            {activeResultsTab === 'scholarships' && (
+            {activeResultsTab === 'scholarships' && pageCount > 1 && (
             <div className="flex items-center justify-center gap-2 border-t border-slate-200 pb-8 pt-6">
-              <button className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400">
+              <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 disabled:cursor-not-allowed disabled:text-slate-300">
                 <ChevronLeft size={16} />
               </button>
-              {[1, 2, 3].map((page) => (
+              {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
                 <button
                   key={page}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${page === 1 ? 'bg-[#2C6EAF] text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                  type="button"
+                  onClick={() => setCurrentPage(page)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${page === currentPage ? 'bg-[#2C6EAF] text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
                 >
                   {page}
                 </button>
               ))}
-              <span className="px-1 text-slate-400">…</span>
-              <button className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-bold text-slate-600">12</button>
-              <button className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
+              <button type="button" onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))} disabled={currentPage === pageCount} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300">
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -746,6 +956,28 @@ export default function ScholarshipFilterPage() {
               </button>
             </div>
             <FilterSidebar filters={filters} setFilters={setFilters} />
+          </div>
+        </div>
+      )}
+
+      {selectedScholarship && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="scholarship-detail-title">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold text-[#2072E1]">{selectedScholarship.university} · {selectedScholarship.country}</p>
+                <h2 id="scholarship-detail-title" className="mt-2 text-xl font-bold text-slate-900">{selectedScholarship.title}</h2>
+              </div>
+              <button type="button" onClick={() => setSelectedScholarship(null)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Đóng chi tiết học bổng"><X size={20} /></button>
+            </div>
+            <p className="mt-4 text-sm leading-6 text-slate-600">{selectedScholarship.description}</p>
+            <dl className="mt-5 grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-4 text-sm">
+              <div><dt className="text-slate-500">Hạn nộp</dt><dd className="mt-1 font-semibold text-slate-900">{selectedScholarship.deadline}</dd></div>
+              <div><dt className="text-slate-500">Hỗ trợ</dt><dd className="mt-1 font-semibold text-slate-900">{selectedScholarship.financialSupportValue}</dd></div>
+              <div><dt className="text-slate-500">GPA tối thiểu</dt><dd className="mt-1 font-semibold text-slate-900">{selectedScholarship.gpaRequirement.toFixed(1)}/4.0</dd></div>
+              <div><dt className="text-slate-500">IELTS tối thiểu</dt><dd className="mt-1 font-semibold text-slate-900">{selectedScholarship.ieltsRequirement}</dd></div>
+            </dl>
+            <button type="button" onClick={() => { setSelectedScholarship(null); onFeedback?.('Đã mở luồng chuẩn bị hồ sơ cho học bổng này.'); }} className="mt-5 w-full rounded-lg bg-[#2072E1] px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">Chuẩn bị hồ sơ</button>
           </div>
         </div>
       )}

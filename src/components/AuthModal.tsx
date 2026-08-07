@@ -18,6 +18,12 @@ import {
 import { motion } from 'motion/react';
 import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
 import { firebaseAuth } from '../firebase';
+import googleLogo from '../assets/images/google-logo.png';
+import microsoftLogo from '../assets/images/microsoft-logo.png';
+import facebookLogoDark from '../assets/images/facebook-logo-dark.png';
+import phoneLogo from '../assets/images/phone-logo.png';
+import authSkolaPanel from '../assets/images/auth-skola-journey.png';
+import skolaLogo from '../assets/images/skola-logo.png';
 
 type AuthMode = 'login' | 'register';
 type AuthStep = 'method' | 'form' | 'otp';
@@ -30,6 +36,7 @@ export interface AuthenticatedUser {
 
 interface AuthModalProps {
   initialMode: AuthMode;
+  presentation?: 'modal' | 'panel';
   onClose: () => void;
   onAuthenticated: (user: AuthenticatedUser, mode: AuthMode) => void;
 }
@@ -64,6 +71,7 @@ function getFirebaseOtpError(error: unknown) {
 
 export default function AuthModal({
   initialMode,
+  presentation = 'modal',
   onClose,
   onAuthenticated,
 }: AuthModalProps) {
@@ -76,6 +84,7 @@ export default function AuthModal({
   const [accountType, setAccountType] = useState<'candidate' | 'partner'>('candidate');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showEmailForm, setShowEmailForm] = useState(false);
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [secondsLeft, setSecondsLeft] = useState(60);
   const [error, setError] = useState('');
@@ -121,6 +130,7 @@ export default function AuthModal({
     setPhone('');
     setPhoneError('');
     setConfirmationResult(null);
+    setShowEmailForm(false);
   };
 
   const handlePhoneSubmit = async (event: FormEvent) => {
@@ -317,30 +327,154 @@ export default function AuthModal({
     { label: 'Mật khẩu xác nhận khớp', valid: Boolean(password) && password === confirmPassword },
   ];
 
+  if (presentation === 'panel') {
+    return (
+      <div
+        className="fixed inset-x-0 bottom-0 top-16 z-30 flex items-start justify-end bg-slate-950/35 px-4 pt-0 backdrop-blur-[2px] sm:px-6 lg:px-8"
+        id="auth-modal-overlay"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) onClose();
+        }}
+      >
+        <motion.section
+          initial={{ opacity: 0, y: '-110%' }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: '-110%', transition: { duration: 0.22, ease: [0.4, 0, 1, 1] } }}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+          className="relative w-full max-w-[480px] overflow-hidden rounded-b-xl border-x border-b-2 border-[#2C6EAF] bg-white shadow-2xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="header-login-title"
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+            aria-label="Đóng"
+          >
+            <X className="h-5 w-5" strokeWidth={1.8} />
+          </button>
+
+          <div className="px-5 pb-6 pt-5 sm:px-7 sm:pb-7">
+            <div className="space-y-2">
+              <SocialAuthButton label="Tiếp tục với Google" tone="google" light onClick={() => setStep('form')} />
+              <SocialAuthButton label="Tiếp tục với Facebook" tone="facebook" light onClick={() => setStep('form')} />
+              <SocialAuthButton label="Tiếp tục với Microsoft" tone="microsoft" light onClick={() => setStep('form')} />
+              <SocialAuthButton label="Tiếp tục với số điện thoại" tone="phone" light onClick={() => setShowEmailForm(true)} />
+            </div>
+
+            <div className="my-4 flex items-center gap-3 text-xs text-slate-400">
+              <span className="h-px flex-1 bg-slate-200" />
+              hoặc
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+
+            <div className="hidden mb-4 grid grid-cols-2 rounded-lg bg-[#F4F8FC] p-1">
+              {(['login', 'register'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => resetFormState(item)}
+                  className={`min-h-10 rounded-md text-sm font-semibold transition-all ${
+                    mode === item
+                      ? 'bg-white text-[#2C6EAF] shadow-sm'
+                      : 'text-[#606061] hover:text-[#181818]'
+                  }`}
+                >
+                  {item === 'login' ? 'Đăng nhập' : 'Đăng ký'}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleFormSubmit} className="space-y-3">
+              {mode === 'register' && (
+                <label className="block text-sm font-medium text-slate-800">
+                  Họ và tên
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(event) => setFullName(event.target.value)}
+                    placeholder="Nguyễn Văn An"
+                    autoComplete="name"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-[#2072E1] focus:ring-2 focus:ring-[#2072E1]/15"
+                  />
+                </label>
+              )}
+              <label className="block text-sm font-medium text-slate-800">
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="Nhập email"
+                  autoComplete="email"
+                  className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-[#2072E1] focus:ring-2 focus:ring-[#2072E1]/15"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-800">
+                Mật khẩu
+                <span className="relative mt-1.5 block">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="Nhập mật khẩu"
+                    autoComplete="current-password"
+                    className="h-11 w-full rounded-lg border border-slate-300 px-3 pr-10 text-sm outline-none transition focus:border-[#2072E1] focus:ring-2 focus:ring-[#2072E1]/15"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400 hover:text-slate-700"
+                    aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </span>
+              </label>
+
+              {mode === 'register' && (
+                <label className="block text-sm font-medium text-slate-800">
+                  Xác nhận mật khẩu
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    placeholder="Nhập lại mật khẩu"
+                    autoComplete="new-password"
+                    className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-[#2072E1] focus:ring-2 focus:ring-[#2072E1]/15"
+                  />
+                </label>
+              )}
+
+              {error && <p className="text-sm text-rose-600">{error}</p>}
+
+              <div className="flex items-center justify-end gap-3 text-sm">
+                {mode === 'login' ? (
+                  <button type="button" className="text-[#2072E1] hover:underline">Quên mật khẩu?</button>
+                ) : <span />}
+              </div>
+            </form>
+          </div>
+        </motion.section>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`fixed inset-0 z-[70] flex p-4 ${
-        step === 'method'
-          ? 'items-center justify-center bg-[#F2F5F8]/95 backdrop-blur-[2px]'
-          : mode === 'login'
-            ? 'items-start justify-end bg-black/40'
-            : 'items-center justify-center bg-slate-950/55 backdrop-blur-[2px]'
-      }`}
+      className="fixed inset-0 z-30 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-[2px] sm:p-6"
       id="auth-modal-overlay"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
       <motion.section
-        initial={{ opacity: 0, scale: 0.97, y: 14 }}
+        initial={{ opacity: 0, scale: 0.96, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: 8 }}
-        transition={{ duration: 0.18 }}
-        className={`${phoneMode ? 'hidden' : ''} relative max-h-[calc(100vh-32px)] w-full overflow-y-auto rounded-xl bg-white shadow-2xl pointer-events-auto ${
-          mode === 'login' && step !== 'method'
-            ? 'mt-12 max-w-[420px] border border-[#2C6EAF]'
-            : 'max-w-[480px] border border-slate-200'
-        }`}
+        exit={{ opacity: 0, scale: 0.96, y: 8, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className={`${phoneMode ? 'hidden' : ''} auth-modal-content relative w-full max-w-[424px] overflow-hidden rounded-xl border-2 border-[#2C6EAF] bg-white shadow-2xl pointer-events-auto lg:max-w-[1120px]`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-modal-title"
@@ -349,13 +483,17 @@ export default function AuthModal({
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 grid h-9 w-9 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#2C6EAF]/30"
+          className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#2C6EAF]/30"
           aria-label="Đóng"
         >
           <X className="h-5 w-5" strokeWidth={1.8} />
         </button>
 
-        <div className="px-5 pb-6 pt-5 sm:px-8 sm:pb-8 sm:pt-7">
+        <div className="lg:grid lg:grid-cols-[0.88fr_1.12fr]">
+          <aside className="relative order-1 hidden min-h-full overflow-hidden bg-[#42A5ED] lg:block lg:min-h-[590px]" aria-label="SKOLA – hiểu rõ hành trình của từng sinh viên">
+            <img src={authSkolaPanel} alt="SKOLA – hiểu rõ hành trình của từng sinh viên" className="absolute inset-0 h-full w-full object-cover object-left" />
+          </aside>
+          <div className="auth-modal-body order-2 px-5 py-5 sm:px-8 sm:py-6">
           {step === 'method' ? (
             <>
               <div className="mb-6 pr-10">
@@ -372,18 +510,18 @@ export default function AuthModal({
 
               <div className="divide-y divide-slate-200 border-y border-slate-200">
                 <RegistrationMethod
-                  label="Đăng ký bằng Gmail"
-                  icon={<Mail className="h-5 w-5 text-[#EA4335]" strokeWidth={2} />}
+                  label="Đăng ký bằng Google"
+                  icon={<img src={googleLogo} alt="" className="h-6 w-6 object-contain" />}
                   onClick={() => setStep('form')}
                 />
                 <RegistrationMethod
                   label="Đăng ký bằng Facebook"
-                  icon={<span className="text-xl font-bold leading-none text-[#1877F2]">f</span>}
+                  icon={<img src={facebookLogoDark} alt="" className="h-6 w-6 object-contain" />}
                   onClick={() => setStep('form')}
                 />
                 <RegistrationMethod
-                  label="Đăng ký bằng Google"
-                  icon={<span className="text-lg font-bold leading-none text-[#4285F4]">G</span>}
+                  label="Đăng ký bằng Microsoft"
+                  icon={<img src={microsoftLogo} alt="" className="h-6 w-6 object-contain" />}
                   onClick={() => setStep('form')}
                 />
                 <RegistrationMethod
@@ -493,36 +631,34 @@ export default function AuthModal({
               )}
 
               {mode === 'login' && (
-                <div className="mb-5 space-y-2">
-                  <SocialAuthButton label="Tiếp tục với Google" tone="google" />
-                  <SocialAuthButton label="Tiếp tục với Facebook" tone="facebook" />
-                  <SocialAuthButton label="Tiếp tục với số điện thoại" tone="phone" onClick={() => setPhoneMode(true)} />
-                  <div className="flex items-center gap-3 py-1 text-xs text-[#7D7A75]">
-                    <span className="h-px flex-1 bg-slate-200" />
-                    hoặc
-                    <span className="h-px flex-1 bg-slate-200" />
+                <div className="mb-4 pr-2">
+                  <img src={skolaLogo} alt="SKOLA" className="h-9 w-auto object-contain" />
+                  <h2 id="auth-modal-title" className="sr-only">Đăng ký hoặc đăng nhập SKOLA</h2>
+                  <div className="mt-5 grid grid-cols-[1fr_96px] gap-4">
+                    <h3 className="text-2xl font-bold leading-tight text-slate-950">Tham gia cùng sinh viên đang sử dụng SKOLA để tìm học bổng phù hợp.</h3>
+                    <p className="text-sm leading-5 text-slate-600">Nhận quyền truy cập miễn phí vào các cơ hội học bổng.</p>
                   </div>
+                  <div className="mt-5 space-y-2">
+                    <SocialAuthButton label="Tiếp tục với Google" tone="google" />
+                    <SocialAuthButton label="Tiếp tục với Facebook" tone="facebook" />
+                    <SocialAuthButton label="Tiếp tục với Microsoft" tone="microsoft" />
+                    <div className="flex items-center gap-3 py-1 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />hoặc<span className="h-px flex-1 bg-slate-200" /></div>
+                    <button type="button" onClick={() => setShowEmailForm((show) => !show)} className="flex min-h-10 w-full items-center justify-center gap-3 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50"><Mail className="h-5 w-5 text-slate-500" />Tiếp tục với Email</button>
+                  </div>
+                  <p className="pt-4 text-center text-sm text-[#35536B]">Bạn có tài khoản chưa? <button type="button" onClick={() => resetFormState('register')} className="font-medium text-[#0B63CE] hover:underline">Đăng ký</button></p>
+                  <p className="mt-4 text-center text-xs leading-5 text-slate-500">Bằng cách đăng ký, bạn đồng ý với <a href="https://www.studyportals.com/about-us/privacy-2/" target="_blank" rel="noreferrer" className="font-semibold text-[#0B63CE] hover:underline">Tuyên bố về Quyền riêng tư</a> và <a href="https://www.studyportals.com/about-us/terms/" target="_blank" rel="noreferrer" className="font-semibold text-[#0B63CE] hover:underline">Điều khoản và Điều kiện</a> của chúng tôi.</p>
+                  {showEmailForm && <div className="mt-4 border-t border-slate-200" />}
                 </div>
               )}
 
-              <div className="mb-5 grid grid-cols-2 rounded-lg bg-[#F4F8FC] p-1">
-                {(['login', 'register'] as const).map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => resetFormState(item)}
-                    className={`min-h-10 rounded-md text-sm font-semibold transition-all ${
-                      mode === item
-                        ? 'bg-white text-[#2C6EAF] shadow-sm'
-                        : 'text-[#606061] hover:text-[#181818]'
-                    }`}
-                  >
-                    {item === 'login' ? 'Đăng nhập' : 'Đăng ký'}
-                  </button>
-                ))}
-              </div>
-
-              <form onSubmit={handleFormSubmit} className="space-y-4">
+              {(mode === 'register' || showEmailForm) && <motion.form
+                key={mode}
+                initial={{ opacity: 0, x: mode === 'login' ? -14 : 14 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                onSubmit={handleFormSubmit}
+                className="space-y-3"
+              >
                 {mode === 'register' && (
                   <>
                     <AuthField
@@ -576,15 +712,15 @@ export default function AuthModal({
                 <AuthField
                   id="auth-email-input"
                   label="Email"
-                  icon={<Mail className="h-4 w-4" />}
+                  icon={null}
                 >
                   <input
                     id="auth-email-input"
                     type="email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
-                    placeholder="email@example.com"
-                    className="auth-input"
+                    placeholder="Nhập email"
+                    className="auth-input no-icon"
                     autoComplete="email"
                   />
                 </AuthField>
@@ -595,7 +731,7 @@ export default function AuthModal({
                 <AuthField
                   id="auth-password-input"
                   label="Mật khẩu"
-                  icon={<LockKeyhole className="h-4 w-4" />}
+                  icon={null}
                 >
                   <div className="relative">
                     <input
@@ -604,7 +740,7 @@ export default function AuthModal({
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       placeholder="Nhập mật khẩu"
-                      className="auth-input pr-11"
+                      className="auth-input no-icon pr-11"
                       autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                     />
                     <button
@@ -704,32 +840,22 @@ export default function AuthModal({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#2C6EAF] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#1E5084] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#2C6EAF] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#1E5084] disabled:cursor-not-allowed disabled:opacity-60"
                   id="auth-btn-submit"
                 >
                   {isSubmitting && <LoaderCircle className="h-4 w-4 animate-spin" />}
                   {mode === 'login' ? 'Đăng nhập' : 'Đăng ký'}
                 </button>
-              </form>
+              </motion.form>}
 
-              {mode === 'login' ? (
-                <p className="mt-5 border-t border-slate-200 pt-4 text-center text-sm text-[#606061]">
-                  Bạn là đối tác?{' '}
-                  <a
-                    href="#lien-he"
-                    onClick={() => console.log('Liên hệ')}
-                    className="font-bold text-[#2C6EAF] transition-colors hover:text-[#1E5084] hover:underline"
-                  >
-                    Liên hệ
-                  </a>
-                </p>
-              ) : (
+              {mode === 'register' && (
                 <p className="mt-5 text-center text-xs leading-5 text-[#7D7A75]">
                   Thông tin của bạn được bảo vệ và không chia sẻ cho bên thứ ba.
                 </p>
               )}
             </>
           )}
+          </div>
         </div>
       </motion.section>
 
@@ -812,9 +938,11 @@ function AuthField({ id, label, icon, children }: AuthFieldProps) {
         {label}
       </label>
       <div className="relative">
-        <span className="pointer-events-none absolute inset-y-0 left-0 grid w-11 place-items-center text-slate-400">
-          {icon}
-        </span>
+        {icon && (
+          <span className="pointer-events-none absolute inset-y-0 left-0 grid w-11 place-items-center text-slate-400">
+            {icon}
+          </span>
+        )}
         {children}
       </div>
     </div>
@@ -845,25 +973,37 @@ function RegistrationMethod({ label, icon, onClick }: RegistrationMethodProps) {
 
 interface SocialAuthButtonProps {
   label: string;
-  tone: 'google' | 'facebook' | 'phone';
+  tone: 'google' | 'facebook' | 'microsoft' | 'phone';
+  light?: boolean;
   onClick?: () => void;
 }
 
-function SocialAuthButton({ label, tone, onClick }: SocialAuthButtonProps) {
-  const toneClass = {
-    google: 'border border-slate-300 !bg-white !text-[#181818] hover:!bg-slate-50',
-    facebook: 'bg-[#4567B2] hover:bg-[#36569B]',
-    phone: 'bg-[#16A34A] hover:bg-[#15803D]',
+function SocialAuthButton({ label, tone, light = false, onClick }: SocialAuthButtonProps) {
+  const toneClass = light
+    ? 'border border-slate-300 !bg-white !text-slate-900 hover:!bg-slate-50'
+    : {
+    google: 'border border-[#1A73E8] !bg-[#1A73E8] !text-white hover:!bg-[#1765cc]',
+    facebook: 'border border-[#4267B2] !bg-[#4267B2] !text-white hover:!bg-[#365899]',
+    microsoft: 'border border-[#F4B400] !bg-[#F4B400] !text-slate-900 hover:!bg-[#E0A400]',
+    phone: 'border border-slate-300 !bg-white !text-[#181818] hover:!bg-slate-50',
   }[tone];
+
+  const icon = tone === 'google'
+    ? <img src={googleLogo} alt="" className="h-5 w-5 object-contain" />
+    : tone === 'facebook'
+      ? <img src={facebookLogoDark} alt="" className="h-5 w-5 object-contain" />
+      : tone === 'microsoft'
+        ? <img src={microsoftLogo} alt="" className="h-5 w-5 object-contain" />
+        : <img src={phoneLogo} alt="" className="h-5 w-5 rounded object-contain" />;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex min-h-11 w-full items-center justify-center gap-3 rounded-md px-4 text-sm font-semibold text-white transition-colors ${toneClass}`}
+      className={`auth-social-button flex min-h-10 w-full items-center justify-center gap-3 rounded-md px-4 text-sm font-semibold text-white transition-colors ${toneClass}`}
     >
-      <span className="grid h-6 w-6 place-items-center rounded-sm bg-white/15 text-base font-bold">
-        {tone === 'google' ? 'G' : tone === 'facebook' ? 'f' : <Phone className="h-4 w-4" strokeWidth={2.2} />}
+      <span className={`grid place-items-center ${tone === 'google' ? 'h-8 w-8 rounded-sm bg-white' : 'h-6 w-6'}`}>
+        {icon}
       </span>
       {label}
     </button>

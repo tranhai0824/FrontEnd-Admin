@@ -240,7 +240,7 @@ export default function ScholarshipList({
           {filteredScholarships.length > 0 ? (
             <motion.div
               layout
-              className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5"
+              className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"
               id="home-scholarships-grid-view"
             >
               {paginatedScholarships.map((scholarship) => (
