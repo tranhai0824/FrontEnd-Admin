@@ -1,0 +1,26 @@
+export declare const ADMIN_ROLES: readonly ["SUPER_ADMIN", "ADMIN", "MODERATOR", "SUPPORT"];
+export type AdminRole = (typeof ADMIN_ROLES)[number];
+export declare const PERMISSIONS: {
+    readonly DASHBOARD_READ: "dashboard.read";
+    readonly ADMIN_MANAGE: "admin.manage";
+    readonly SCHOLARSHIP_APPROVE: "scholarship.approve";
+    readonly SCHOLARSHIP_WRITE: "scholarship.write";
+    readonly USER_READ: "user.read";
+    readonly USER_SUSPEND: "user.suspend";
+    readonly USER_DELETE: "user.delete";
+    readonly ORGANIZATION_READ: "organization.read";
+    readonly ORGANIZATION_REVIEW: "organization.review";
+    readonly APPLICATION_READ: "application.read";
+    readonly APPLICATION_REVIEW: "application.review";
+    readonly SETTINGS_WRITE: "settings.write";
+    readonly CONSULTING_REPLY: "consulting.reply";
+    readonly CONTENT_MANAGE: "content.manage";
+    readonly NOTIFICATION_READ: "notification.read";
+    readonly TRASH_MANAGE: "trash.manage";
+    readonly SYSTEM_READ: "system.read";
+    readonly REPORT_MANAGE: "report.manage";
+    readonly AUDIT_READ: "audit.read";
+};
+export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
+export declare const ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]>;
+export declare function hasPermission(role: string, permission: Permission): boolean;

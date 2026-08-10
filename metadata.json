@@ -1,6 +1,0 @@
-{
-  "name": "Scholarship Platform",
-  "description": "Nền tảng tìm kiếm, lọc và nộp hồ sơ học bổng hiện đại, uy tín và thân thiện với sinh viên.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
