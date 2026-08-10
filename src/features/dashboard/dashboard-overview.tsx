@@ -52,14 +52,54 @@ const dashboardFallback: DashboardData = {
   },
 };
 
+type BackendDashboard = {
+  period?: { days?: number };
+  kpis?: { users?: number; scholarships?: number; applications?: number };
+  queues?: { pending?: number };
+  trends?: Array<{ loggedAt?: string; eventType?: string }>;
+};
+
+function normalizeDashboard(data: BackendDashboard, requestedDays: number): DashboardData {
+  const events = Array.isArray(data.trends) ? data.trends : [];
+  const viewsByDate = new Map<string, number>();
+  for (const event of events) {
+    if (!event.loggedAt || event.eventType !== "view") continue;
+    const date = event.loggedAt.slice(0, 10);
+    viewsByDate.set(date, (viewsByDate.get(date) ?? 0) + 1);
+  }
+
+  const totalUsers = data.kpis?.users ?? dashboardFallback.kpis.users.total;
+  const totalScholarships = data.kpis?.scholarships ?? dashboardFallback.kpis.publishedScholarships.total;
+  const totalApplications = data.kpis?.applications ?? dashboardFallback.kpis.applications.total;
+  const pending = data.queues?.pending ?? 0;
+
+  return {
+    ...dashboardFallback,
+    range: { days: data.period?.days ?? requestedDays },
+    attention: { ...dashboardFallback.attention, pendingScholarships: pending, failedJobs: pending },
+    kpis: {
+      users: { total: totalUsers, current: totalUsers, growth: 0 },
+      publishedScholarships: { total: totalScholarships, current: totalScholarships, growth: 0 },
+      applications: { total: totalApplications, current: totalApplications, growth: 0 },
+      verifiedOrganizations: dashboardFallback.kpis.verifiedOrganizations,
+    },
+    funnel: { ...dashboardFallback.funnel, views: events.filter((event) => event.eventType === "view").length },
+    trends: {
+      users: dashboardFallback.trends.users,
+      applications: Array.from(viewsByDate, ([date, value]) => ({ date, value })),
+    },
+  };
+}
+
 async function getDashboard(query: string) {
+  const days = Number(new URLSearchParams(query).get("days")) || 30;
   try {
     const response = await authClient.fetch(`/api/v1/admin/dashboard?${query}`);
-    if (response.ok) return response.json() as Promise<DashboardData>;
+    if (response.ok) return normalizeDashboard(await response.json() as BackendDashboard, days);
   } catch {
     // The local API is optional while the interface is being previewed.
   }
-  return { ...dashboardFallback, range: { days: Number(new URLSearchParams(query).get("days")) || 30 } };
+  return { ...dashboardFallback, range: { days } };
   const response = await authClient.fetch(`/api/v1/admin/dashboard?${query}`);
   if (!response.ok) throw new Error("Không tải được dữ liệu dashboard.");
   return response.json() as Promise<DashboardData>;
