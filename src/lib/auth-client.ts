@@ -46,6 +46,12 @@ export const authClient = {
     return response;
   },
   async logout() {
+    if (accessToken) {
+      await request("/api/v1/auth/sessions", {
+        method: "DELETE",
+        body: JSON.stringify({ all: true }),
+      }).catch(() => undefined);
+    }
     await authRequest("/api/auth/logout", { method: "POST" });
     accessToken = null;
   },
