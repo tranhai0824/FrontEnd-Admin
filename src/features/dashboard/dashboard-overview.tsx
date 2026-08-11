@@ -26,7 +26,7 @@ const ranges = [7, 30, 90] as const;
 
 const dashboardFallback: DashboardData = {
   range: { days: 30 },
-  attention: { pendingScholarships: 0, overdueScholarships24h: 0, overdueScholarships72h: 0, pendingOrganizations: 0, unansweredConsulting: 1, overdueConsulting: 0, interventionApplications: 0, failedJobs: 0, newReports: 0 },
+  attention: { pendingScholarships: 0, overdueScholarships24h: 0, overdueScholarships72h: 0, pendingOrganizations: 0, unansweredConsulting: 0, overdueConsulting: 0, interventionApplications: 0, failedJobs: 0, newReports: 0 },
   kpis: {
     users: { total: 0, current: 0, growth: 0 },
     publishedScholarships: { total: 0, current: 0, growth: 0 },
@@ -34,22 +34,7 @@ const dashboardFallback: DashboardData = {
     verifiedOrganizations: { total: 0, current: 0, growth: 0 },
   },
   funnel: { views: 0, saves: 0, started: 0 },
-  trends: {
-    users: [
-      { date: "2026-07-10", value: 8 }, { date: "2026-07-12", value: 6 }, { date: "2026-07-14", value: 7 },
-      { date: "2026-07-16", value: 10 }, { date: "2026-07-18", value: 12 }, { date: "2026-07-20", value: 11 },
-      { date: "2026-07-22", value: 14 }, { date: "2026-07-24", value: 16 }, { date: "2026-07-26", value: 15 },
-      { date: "2026-07-28", value: 18 }, { date: "2026-07-30", value: 20 }, { date: "2026-08-01", value: 19 },
-      { date: "2026-08-03", value: 23 }, { date: "2026-08-05", value: 26 }, { date: "2026-08-07", value: 29 },
-    ],
-    applications: [
-      { date: "2026-07-10", value: 3 }, { date: "2026-07-12", value: 2 }, { date: "2026-07-14", value: 4 },
-      { date: "2026-07-16", value: 3 }, { date: "2026-07-18", value: 5 }, { date: "2026-07-20", value: 4 },
-      { date: "2026-07-22", value: 6 }, { date: "2026-07-24", value: 5 }, { date: "2026-07-26", value: 7 },
-      { date: "2026-07-28", value: 6 }, { date: "2026-07-30", value: 8 }, { date: "2026-08-01", value: 7 },
-      { date: "2026-08-03", value: 9 }, { date: "2026-08-05", value: 8 }, { date: "2026-08-07", value: 10 },
-    ],
-  },
+  trends: { users: [], applications: [] },
 };
 
 type BackendDashboard = {
