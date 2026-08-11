@@ -56,6 +56,18 @@ type ScholarshipDetail = ScholarshipRow & {
 };
 type Reviewer = { id: string; email: string | null; profile: { fullName: string | null } | null };
 type ReviewerList = { items: Reviewer[] };
+type BackendScholarship = { id: string; title: string; description: string; degree: string; valueType?: string; value_type?: string; locationProvinceCity?: string | null; location_province_city?: string | null; deadline: string; isActive?: boolean; isFeatured?: boolean; createdAt?: string; partnerProfile?: { id: string; companyName: string } | null; _count?: { applications: number } };
+type BackendScholarshipList = { items: BackendScholarship[]; pagination: { page: number; pageSize: number; total: number; pages: number } };
+
+function normalizeScholarship(item: BackendScholarship): ScholarshipRow {
+  const status: ScholarshipStatus = new Date(item.deadline).getTime() < Date.now() ? "EXPIRED" : item.isActive ? "PUBLISHED" : "REJECTED";
+  return { id: item.id, title: item.title, type: item.valueType ?? item.value_type ?? "Học bổng", country: item.locationProvinceCity ?? item.location_province_city ?? null, region: item.degree, amount: null, deadline: item.deadline, status, viewCount: 0, submittedAt: item.createdAt ?? null, reviewerId: null, isFeatured: Boolean(item.isFeatured), organization: { id: item.partnerProfile?.id ?? "system", name: item.partnerProfile?.companyName ?? "Hệ thống", status: "VERIFIED", verified: true }, _count: item._count ?? { applications: 0 } };
+}
+function normalizeScholarshipList(data: BackendScholarshipList): ScholarshipList {
+  const items = data.items.map(normalizeScholarship);
+  const counts = items.reduce<Partial<Record<ScholarshipStatus, number>>>((result, item) => { result[item.status] = (result[item.status] ?? 0) + 1; return result; }, {});
+  return { items, counts, pagination: { ...data.pagination, pageCount: data.pagination.pages }, configuration: { warningYellowHours: 24, warningRedHours: 72, reviewChecklist: [] } };
+}
 
 const tabs: Array<{ value: ScholarshipStatus; label: string }> = [
   { value: "PENDING_REVIEW", label: "Chờ duyệt" },
@@ -131,7 +143,7 @@ export function ScholarshipManagement() {
   const router = useRouter();
   const params = useSearchParams();
   const queryClient = useQueryClient();
-  const status = (params.get("status") as ScholarshipStatus) || "PENDING_REVIEW";
+  const status = (params.get("status") as ScholarshipStatus) || "PUBLISHED";
   const page = Math.max(1, Number(params.get("page")) || 1);
   const query = params.get("query") ?? "";
   const [search, setSearch] = useState(query);
@@ -152,14 +164,14 @@ export function ScholarshipManagement() {
   }, [selectedId]);
 
   const queryString = useMemo(() => new URLSearchParams({
-    status, page: String(page), pageSize: "20", query,
+    status: status === "PUBLISHED" ? "active" : status === "EXPIRED" ? "expired" : "inactive", page: String(page), pageSize: "20", ...(query ? { q: query } : {}),
   }).toString(), [page, query, status]);
   const scholarships = useQuery({
     queryKey: ["admin-scholarships", queryString],
     queryFn: async () => {
       const response = await authClient.fetch(`/api/v1/admin/scholarships?${queryString}`);
       if (!response.ok) throw new Error("Không thể tải danh sách học bổng.");
-      return response.json() as Promise<ScholarshipList>;
+      return normalizeScholarshipList(await response.json() as BackendScholarshipList);
     },
     placeholderData: keepPreviousData,
   });
@@ -178,14 +190,16 @@ export function ScholarshipManagement() {
       }
       const response = await authClient.fetch(`/api/v1/admin/scholarships/${selectedId}`);
       if (!response.ok) throw new Error("Không thể tải nội dung học bổng.");
-      return response.json() as Promise<ScholarshipDetail>;
+      const raw = await response.json() as BackendScholarship & Record<string, unknown>;
+      const row = normalizeScholarship(raw);
+      return { ...row, summary: raw.description, description: raw.description, eligibility: raw.majors ?? null, requiredDocuments: raw.requiredCertificates ?? [], rejectionReason: null, creator: { id: row.organization.id, email: null, profile: { fullName: row.organization.name } }, applications: [], history: [], revisions: [] } as ScholarshipDetail;
     },
   });
   const reviewers = useQuery({
     queryKey: ["admin-scholarship-reviewers"],
     queryFn: async () => {
       const responses = await Promise.all(["ADMIN", "MODERATOR"].map(async (role) => {
-        const response = await authClient.fetch(`/api/v1/admin/users?role=${role}&status=ACTIVE&pageSize=100`);
+        const response = await authClient.fetch(`/api/v1/admin/users?role=${role === "ADMIN" ? "admin" : "mentor"}&status=active&pageSize=100`);
         if (!response.ok) throw new Error("Không thể tải danh sách người duyệt.");
         return response.json() as Promise<ReviewerList>;
       }));
@@ -196,7 +210,7 @@ export function ScholarshipManagement() {
     mutationFn: async ({ id, action, note = reason }: { id: string; action: "APPROVE" | "REJECT" | "REQUEST_CHANGES" | "REMOVE"; note?: string }) => {
       const response = await authClient.fetch(`/api/v1/admin/scholarships/${id}/decision`, {
         method: "POST",
-        body: JSON.stringify({ decision: action, reason: note || undefined, checklist: Array.from(checklist) }),
+        body: JSON.stringify({ action: action === "APPROVE" ? "approve" : "reject", reason: note || undefined }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
@@ -282,27 +296,19 @@ export function ScholarshipManagement() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const useMockData = Boolean(scholarships.error) || !scholarships.data;
+  const useMockData = false;
   const deadlineFilter = params.get("deadline");
   const unitFilter = params.get("unit");
   const unitOptions = scholarshipUnitOptions;
-  const filteredRows = useMockData
-    ? scholarshipMockRows.filter((item) => {
-      if (deadlineFilter === "soon") {
-        if (!item.deadline) return false;
-        const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
-        return item.status === "PUBLISHED" && days >= 0 && days <= 10;
-      }
-      return item.status === status;
-    })
-    : scholarships.data?.items ?? [];
+  const filteredRows = (scholarships.data?.items ?? []).filter((item) => {
+    if (deadlineFilter !== "soon") return true;
+    if (!item.deadline) return false;
+    const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
+    return item.status === "PUBLISHED" && days >= 0 && days <= 10;
+  });
   const visibleRows = filteredRows.filter((item) => !unitFilter || item.organization.name.startsWith(unitFilter));
-  const mockCounts = scholarshipMockRows.reduce<Partial<Record<ScholarshipStatus, number>>>((result, item) => {
-    result[item.status] = (result[item.status] ?? 0) + 1;
-    return result;
-  }, {});
-  const counts = scholarships.data?.counts ?? mockCounts;
-  const soonCount = scholarshipMockRows.filter((item) => {
+  const counts = scholarships.data?.counts ?? {};
+  const soonCount = (scholarships.data?.items ?? []).filter((item) => {
     if (!item.deadline) return false;
     const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
     return item.status === "PUBLISHED" && days >= 0 && days <= 10;

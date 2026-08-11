@@ -17,6 +17,19 @@ type UserRole = "CANDIDATE" | "PARTNER" | "SUPER_ADMIN" | "ADMIN" | "MODERATOR" 
 type UserStatus = "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED" | "DISABLED";
 type ApiUser = { id: string; email: string | null; phone: string | null; role: UserRole; status: UserStatus; emailVerified: boolean; lastLoginAt: string | null; createdAt: string; updatedAt: string; profile?: { fullName: string | null } | null };
 type UsersResponse = { items: ApiUser[]; pagination: { page: number; pageSize: number; total: number; pageCount: number } };
+type BackendUser = { id: string; email: string | null; roles?: string[]; status: string; isEmailVerified?: boolean; lastLoginAt: string | null; createdAt: string; updatedAt: string };
+type BackendUsersResponse = { items: BackendUser[]; pagination: { page: number; pageSize: number; total: number; pages: number } };
+
+const normalizeUsers = (data: BackendUsersResponse): UsersResponse => ({
+  items: data.items.map((user) => {
+    const rawRole = user.roles?.[0]?.toUpperCase();
+    const role: UserRole = rawRole === "PARTNER" || rawRole === "ADMIN" ? rawRole : rawRole === "MENTOR" ? "MODERATOR" : "CANDIDATE";
+    const rawStatus = user.status.toUpperCase();
+    const status: UserStatus = !user.isEmailVerified && rawStatus === "ACTIVE" ? "PENDING_VERIFICATION" : rawStatus === "SUSPENDED" || rawStatus === "DISABLED" ? rawStatus : "ACTIVE";
+    return { ...user, phone: null, role, status, emailVerified: Boolean(user.isEmailVerified), profile: null };
+  }),
+  pagination: { ...data.pagination, pageCount: data.pagination.pages },
+});
 
 const roles: Record<UserRole, string> = {
   CANDIDATE: "Ứng viên", PARTNER: "Đối tác", SUPER_ADMIN: "Quản trị cấp cao",
@@ -49,34 +62,41 @@ export function UserManagement() {
   const lastLogin = searchParams.get("lastLogin") ?? "all";
 
   const queryString = useMemo(() => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams();
     params.set("page", String(page)); params.set("pageSize", String(pageSize));
-    params.set("sortBy", "createdAt"); params.set("sortDirection", "desc");
+    params.set("sort", "created_desc");
+    const requestedQuery = searchParams.get("query");
+    if (requestedQuery) params.set("q", requestedQuery);
+    if (role !== "all") params.set("role", role === "SUPER_ADMIN" ? "admin" : role.toLowerCase());
+    if (status !== "all" && status !== "PENDING_VERIFICATION") params.set("status", status.toLowerCase());
+    if (dateFrom) params.set("createdFrom", dateFrom);
     return params.toString();
-  }, [page, pageSize, searchParams]);
+  }, [dateFrom, page, pageSize, role, searchParams, status]);
 
   const usersQuery = useQuery({
     queryKey: ["admin-users", queryString], placeholderData: keepPreviousData,
     queryFn: async () => {
       const response = await authClient.fetch(`/api/v1/admin/users?${queryString}`);
       if (!response.ok) throw new Error(response.status === 403 ? "Bạn không có quyền xem danh sách người dùng." : "Không thể tải dữ liệu người dùng. Vui lòng kiểm tra kết nối máy chủ.");
-      return response.json() as Promise<UsersResponse>;
+      return normalizeUsers(await response.json() as BackendUsersResponse);
     },
   });
   const statsQuery = useQuery({
     queryKey: ["admin-user-status-counts"],
     queryFn: async () => Object.fromEntries(await Promise.all(cards.map(async ({ value }) => {
-      const response = await authClient.fetch(`/api/v1/admin/users?page=1&pageSize=1${value === "all" ? "" : `&status=${value}`}`);
+      const statusQuery = value === "all" || value === "PENDING_VERIFICATION" ? "" : `&status=${value.toLowerCase()}`;
+      const response = await authClient.fetch(`/api/v1/admin/users?page=1&pageSize=100${statusQuery}`);
       if (!response.ok) throw new Error("Không thể tải thống kê.");
-      const data = await response.json() as UsersResponse;
-      return [value, data.pagination.total] as const;
+      const data = normalizeUsers(await response.json() as BackendUsersResponse);
+      return [value, value === "PENDING_VERIFICATION" ? data.items.filter((user) => !user.emailVerified).length : data.pagination.total] as const;
     }))) as Record<"all" | UserStatus, number>,
   });
   const disableUsers = useMutation({
     mutationFn: async (ids: string[]) => {
-      const response = await authClient.fetch("/api/v1/admin/users/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) });
+      const response = await authClient.fetch("/api/v1/admin/users/bulk-actions", { method: "POST", body: JSON.stringify({ ids, action: "disable", reason: "Disabled from admin console" }) });
       if (!response.ok) throw new Error("Không thể vô hiệu hóa các tài khoản đã chọn.");
-      return response.json() as Promise<{ affectedCount: number }>;
+      const result = await response.json() as { affected: number };
+      return { affectedCount: result.affected };
     },
     onSuccess: async ({ affectedCount }) => {
       toast.success(`Đã vô hiệu hóa ${affectedCount} tài khoản.`); setSelected([]);

@@ -24,6 +24,27 @@ type Detail = {
   notes: Array<{ id: string; content: string; createdAt: string }>;
 };
 
+function normalizeDetail(data: Record<string, any>): Detail {
+  const profile = data.candidateProfile ?? data.mentorProfile ?? data.partnerProfile ?? null;
+  return {
+    id: data.id,
+    email: data.email ?? null,
+    phone: data.phone ?? null,
+    role: String(data.roles?.[0] ?? "candidate").toUpperCase(),
+    status: String(data.status ?? "active").toUpperCase(),
+    emailVerified: Boolean(data.isEmailVerified),
+    phoneVerified: false,
+    lastLoginAt: data.lastLoginAt ?? null,
+    createdAt: data.createdAt,
+    profile: profile ? { fullName: profile.fullName ?? profile.companyName ?? null, gpa: profile.gpa ?? null, educationLevel: profile.currentDegreeLevel ?? null, country: profile.country ?? null, bio: profile.bio ?? null } : null,
+    memberships: data.partnerProfile ? [{ role: "PARTNER", isOwner: true, organization: { id: data.partnerProfile.id, name: data.partnerProfile.companyName, status: data.partnerProfile.approvalStatus } }] : [],
+    candidateApplications: data.candidateProfile?.applications ?? [],
+    refreshTokens: [],
+    logs: [],
+    notes: [],
+  };
+}
+
 export function UserDetail({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
@@ -32,12 +53,15 @@ export function UserDetail({ id }: { id: string }) {
   const query = useQuery({ queryKey: ["admin-user", id], queryFn: async () => {
     const response = await authClient.fetch(`/api/v1/admin/users/${id}`);
     if (!response.ok) throw new Error("Không thể tải người dùng.");
-    const data = await response.json() as Detail;
+    const data = normalizeDetail(await response.json() as Record<string, any>);
     setRole(data.role);
     return data;
   } });
   const action = useMutation({ mutationFn: async (payload: { action: string; reason?: string; role?: string }) => {
-    const response = await authClient.fetch(`/api/v1/admin/users/${id}/actions`, { method: "POST", body: JSON.stringify(payload) });
+    const actionMap: Record<string, string> = { ACTIVATE: "activate", SUSPEND: "suspend", FORCE_LOGOUT: "revoke_sessions", SOFT_DELETE: "disable", CHANGE_ROLE: "add_role" };
+    const backendAction = actionMap[payload.action];
+    if (!backendAction) throw new Error("Chức năng này chưa được backend hỗ trợ.");
+    const response = await authClient.fetch(`/api/v1/admin/users/${id}/actions`, { method: "POST", body: JSON.stringify({ action: backendAction, reason: payload.reason, ...(payload.role ? { role: payload.role.toLowerCase() === "super_admin" ? "admin" : payload.role.toLowerCase() } : {}) }) });
     if (!response.ok) { const body = await response.json().catch(() => null) as { message?: string } | null; throw new Error(body?.message ?? "Không thể thực hiện hành động."); }
   }, onSuccess: async () => { toast.success("Đã cập nhật tài khoản."); setReason(""); await queryClient.invalidateQueries({ queryKey: ["admin-user", id] }); }, onError: (error: Error) => toast.error(error.message) });
   const addNote = useMutation({ mutationFn: async () => {

@@ -28,12 +28,12 @@ const dashboardFallback: DashboardData = {
   range: { days: 30 },
   attention: { pendingScholarships: 0, overdueScholarships24h: 0, overdueScholarships72h: 0, pendingOrganizations: 0, unansweredConsulting: 1, overdueConsulting: 0, interventionApplications: 0, failedJobs: 0, newReports: 0 },
   kpis: {
-    users: { total: 3, current: 3, growth: 100 },
-    publishedScholarships: { total: 1, current: 1, growth: 0 },
-    applications: { total: 1, current: 1, growth: 100 },
-    verifiedOrganizations: { total: 1, current: 1, growth: 0 },
+    users: { total: 0, current: 0, growth: 0 },
+    publishedScholarships: { total: 0, current: 0, growth: 0 },
+    applications: { total: 0, current: 0, growth: 0 },
+    verifiedOrganizations: { total: 0, current: 0, growth: 0 },
   },
-  funnel: { views: 128, saves: 0, started: 1 },
+  funnel: { views: 0, saves: 0, started: 0 },
   trends: {
     users: [
       { date: "2026-07-10", value: 8 }, { date: "2026-07-12", value: 6 }, { date: "2026-07-14", value: 7 },
@@ -93,16 +93,9 @@ function normalizeDashboard(data: BackendDashboard, requestedDays: number): Dash
 
 async function getDashboard(query: string) {
   const days = Number(new URLSearchParams(query).get("days")) || 30;
-  try {
-    const response = await authClient.fetch(`/api/v1/admin/dashboard?${query}`);
-    if (response.ok) return normalizeDashboard(await response.json() as BackendDashboard, days);
-  } catch {
-    // The local API is optional while the interface is being previewed.
-  }
-  return { ...dashboardFallback, range: { days } };
   const response = await authClient.fetch(`/api/v1/admin/dashboard?${query}`);
   if (!response.ok) throw new Error("Không tải được dữ liệu dashboard.");
-  return response.json() as Promise<DashboardData>;
+  return normalizeDashboard(await response.json() as BackendDashboard, days);
 }
 
 function formatCount(value: number) {
@@ -173,14 +166,7 @@ export function DashboardOverview() {
 
 function KpiLink({ href, children }: { href: string; children: React.ReactNode }) { const router = useRouter(); return <button type="button" className="text-left transition hover:-translate-y-0.5 hover:shadow-md" onClick={() => router.push(href)}>{children}</button>; }
 function TrendPanel({ title, data, label, range, onRangeChange }: { title: string; data: DashboardTrendPoint[]; label: string; range: number; onRangeChange: (value: number) => void }) {
-  const source = data.length < 2
-    ? [120, 95, 72, 88, 64, 82, 118, 145, 132, 168, 190, 176, 214, 248, 232, 270, 302, 286, 326, 352, 338, 380, 420, 398, 452, 478, 510, 540, 568, 600].map((value, index) => {
-      const date = new Date();
-      date.setHours(0, 0, 0, 0);
-      date.setDate(date.getDate() - (29 - index));
-      return { date: date.toISOString().slice(0, 10), value };
-    })
-    : data;
+  const source = data;
   const points = Array.from({ length: range }, (_, index) => {
     const date = new Date();
     date.setHours(0, 0, 0, 0);
