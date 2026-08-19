@@ -16,16 +16,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth-client";
 import { cn, formatDate } from "@/lib/utils";
 
-type ScholarshipStatus = "PENDING_REVIEW" | "PUBLISHED" | "REJECTED" | "EXPIRED" | "DRAFT" | "REMOVED" | "CLOSED" | "ARCHIVED";
+type ScholarshipStatus = "PENDING_REVIEW" | "PUBLISHED" | "REJECTED" | "CHANGES_REQUESTED" | "EXPIRED" | "DRAFT" | "REMOVED" | "CLOSED" | "ARCHIVED";
 type ScholarshipRow = {
   id: string;
   title: string;
   type: string;
   country: string | null;
   region: string | null;
-  amount: string | null;
   deadline: string | null;
   status: ScholarshipStatus;
+  reviewReason: string | null;
   viewCount: number;
   submittedAt: string | null;
   reviewerId: string | null;
@@ -51,21 +51,39 @@ type ScholarshipDetail = ScholarshipRow & {
   rejectionReason: string | null;
   creator: { id: string; email: string | null; profile: { fullName: string | null } | null };
   applications: Array<{ id: string; status: string; submittedAt: string | null }>;
-  history: Array<{ id: string; action: string; metadata: unknown; createdAt: string }>;
+  history: Array<{ id: string; action: string; reason?: string | null; createdAt: string }>;
   revisions: Array<{ id: string; version: number; snapshot: unknown; createdAt: string }>;
 };
 type Reviewer = { id: string; email: string | null; profile: { fullName: string | null } | null };
 type ReviewerList = { items: Reviewer[] };
-type BackendScholarship = { id: string; title: string; description: string; degree: string; valueType?: string; value_type?: string; locationProvinceCity?: string | null; location_province_city?: string | null; deadline: string; isActive?: boolean; isFeatured?: boolean; createdAt?: string; partnerProfile?: { id: string; companyName: string } | null; _count?: { applications: number } };
-type BackendScholarshipList = { items: BackendScholarship[]; pagination: { page: number; pageSize: number; total: number; pages: number } };
+type BackendScholarship = { id: string; title: string; description: string; degree: string; valueType?: string; value_type?: string; locationProvinceCities?: string[]; deadline: string; isActive?: boolean; isFeatured?: boolean; reviewStatus?: "pending" | "approved" | "rejected" | "changes_requested"; reviewReason?: string | null; reviewerId?: string | null; createdAt?: string; partnerProfile?: { id: string; companyName: string } | null; _count?: { applications: number; analyticsLogs?: number } };
+type BackendScholarshipList = { items: BackendScholarship[]; counts?: Record<string, number>; pagination: { page: number; pageSize: number; total: number; pages: number } };
 
+// reviewStatus là nguồn sự thật duy nhất cho trạng thái kiểm duyệt (backend Backend-for-admin đã trả
+// đúng field này từ 2026-08-19) — KHÔNG được suy đoán lại từ is_active như bản cũ, vì is_active=false
+// vừa đúng cho học bổng "pending" (chưa từng duyệt) lẫn "đối tác tự đóng đơn", hai trạng thái khác hẳn
+// nhau. deadline quá hạn luôn override thành EXPIRED bất kể reviewStatus, vì hết hạn là sự thật khách
+// quan không phụ thuộc kiểm duyệt.
 function normalizeScholarship(item: BackendScholarship): ScholarshipRow {
-  const status: ScholarshipStatus = new Date(item.deadline).getTime() < Date.now() ? "EXPIRED" : item.isActive ? "PUBLISHED" : "REJECTED";
-  return { id: item.id, title: item.title, type: item.valueType ?? item.value_type ?? "Học bổng", country: item.locationProvinceCity ?? item.location_province_city ?? null, region: item.degree, amount: null, deadline: item.deadline, status, viewCount: 0, submittedAt: item.createdAt ?? null, reviewerId: null, isFeatured: Boolean(item.isFeatured), organization: { id: item.partnerProfile?.id ?? "system", name: item.partnerProfile?.companyName ?? "Hệ thống", status: "VERIFIED", verified: true }, _count: item._count ?? { applications: 0 } };
+  let status: ScholarshipStatus;
+  if (new Date(item.deadline).getTime() < Date.now()) status = "EXPIRED";
+  else if (item.reviewStatus === "pending") status = "PENDING_REVIEW";
+  else if (item.reviewStatus === "rejected") status = "REJECTED";
+  else if (item.reviewStatus === "changes_requested") status = "CHANGES_REQUESTED";
+  else status = item.isActive ? "PUBLISHED" : "REJECTED";
+  const locations = item.locationProvinceCities ?? [];
+  return { id: item.id, title: item.title, type: item.valueType ?? item.value_type ?? "Học bổng", country: locations.length ? locations.join(", ") : "Toàn quốc", region: item.degree, deadline: item.deadline, status, reviewReason: item.reviewReason ?? null, viewCount: item._count?.analyticsLogs ?? 0, submittedAt: item.createdAt ?? null, reviewerId: item.reviewerId ?? null, isFeatured: Boolean(item.isFeatured), organization: { id: item.partnerProfile?.id ?? "system", name: item.partnerProfile?.companyName ?? "Hệ thống", status: "VERIFIED", verified: true }, _count: item._count ?? { applications: 0 } };
 }
 function normalizeScholarshipList(data: BackendScholarshipList): ScholarshipList {
   const items = data.items.map(normalizeScholarship);
-  const counts = items.reduce<Partial<Record<ScholarshipStatus, number>>>((result, item) => { result[item.status] = (result[item.status] ?? 0) + 1; return result; }, {});
+  // Backend trả counts toàn cục (không giới hạn theo trang hiện tại) theo đúng key PENDING_REVIEW/
+  // PUBLISHED/REJECTED/CHANGES_REQUESTED/EXPIRED — dùng thẳng thay vì đếm lại trên `items` (chỉ đúng
+  // 20 dòng của trang đang xem, sai hoàn toàn cho mọi tab khác tab đang mở).
+  const counts: Partial<Record<ScholarshipStatus, number>> = data.counts ? {
+    PENDING_REVIEW: data.counts.PENDING_REVIEW ?? 0, PUBLISHED: data.counts.PUBLISHED ?? 0,
+    REJECTED: data.counts.REJECTED ?? 0, CHANGES_REQUESTED: data.counts.CHANGES_REQUESTED ?? 0,
+    EXPIRED: data.counts.EXPIRED ?? 0,
+  } : items.reduce<Partial<Record<ScholarshipStatus, number>>>((result, item) => { result[item.status] = (result[item.status] ?? 0) + 1; return result; }, {});
   return { items, counts, pagination: { ...data.pagination, pageCount: data.pagination.pages }, configuration: { warningYellowHours: 24, warningRedHours: 72, reviewChecklist: [] } };
 }
 
@@ -78,34 +96,6 @@ const tabs: Array<{ value: ScholarshipStatus; label: string }> = [
   { value: "REMOVED", label: "Đã gỡ" },
 ];
 
-const scholarshipMockRows: ScholarshipRow[] = [
-  { id: "mock-1", title: "Học bổng EduPath — Công nghệ thông tin", type: "Công nghệ", country: "Việt Nam", region: "Cử nhân", amount: null, deadline: "2026-09-20", status: "PENDING_REVIEW", viewCount: 1877, submittedAt: "2026-08-09T00:00:00.000Z", reviewerId: "Minh Châu", isFeatured: false, organization: { id: "org-1", name: "EduPath Việt Nam · HB-2026-0138", status: "VERIFIED", verified: true }, _count: { applications: 33 } },
-  { id: "mock-2", title: "Học bổng MEXT Nhật Bản — Nghiên cứu sinh 2026", type: "Kỹ thuật", country: "Nhật", region: "Thạc sĩ", amount: null, deadline: "2026-08-30", status: "PENDING_REVIEW", viewCount: 3740, submittedAt: "2026-08-07T23:00:00.000Z", reviewerId: null, isFeatured: false, organization: { id: "org-2", name: "Đại sứ quán Nhật · HB-2026-0141", status: "VERIFIED", verified: true }, _count: { applications: 81 } },
-  { id: "mock-3", title: "Học bổng Erasmus Mundus — Quản trị công", type: "Kinh tế", country: "Đa quốc gia", region: "Thạc sĩ", amount: null, deadline: "2026-12-15", status: "PENDING_REVIEW", viewCount: 2210, submittedAt: "2026-08-07T21:00:00.000Z", reviewerId: null, isFeatured: false, organization: { id: "org-3", name: "European Commission · HB-2026-0132", status: "VERIFIED", verified: true }, _count: { applications: 41 } },
-  { id: "mock-4", title: "Học bổng KAIST — Cử nhân tài năng", type: "Công nghệ", country: "Hàn Quốc", region: "Cử nhân", amount: null, deadline: "2026-10-05", status: "PENDING_REVIEW", viewCount: 640, submittedAt: "2026-08-09T04:00:00.000Z", reviewerId: "Tuấn Hải", isFeatured: false, organization: { id: "org-4", name: "KAIST · HB-2026-0144", status: "VERIFIED", verified: true }, _count: { applications: 12 } },
-  { id: "mock-5", title: "Học bổng Chevening 2027 — Vòng 1", type: "Kinh tế", country: "Anh", region: "Thạc sĩ", amount: null, deadline: "2026-11-01", status: "PUBLISHED", viewCount: 8402, submittedAt: "2026-08-08T02:00:00.000Z", reviewerId: "Minh Châu", isFeatured: true, organization: { id: "org-5", name: "British Council · HB-2026-0121", status: "VERIFIED", verified: true }, _count: { applications: 126 } },
-  { id: "mock-6", title: "Học bổng DAAD EPOS — Phát triển bền vững", type: "Kỹ thuật", country: "Đức", region: "Thạc sĩ", amount: null, deadline: "2026-08-16", status: "PUBLISHED", viewCount: 11930, submittedAt: "2026-08-07T02:00:00.000Z", reviewerId: "Tuấn Hải", isFeatured: false, organization: { id: "org-6", name: "DAAD · HB-2026-0109", status: "VERIFIED", verified: true }, _count: { applications: 204 } },
-  { id: "mock-7", title: "Học bổng Fulbright VN 2026", type: "Kinh tế", country: "Hoa Kỳ", region: "Thạc sĩ", amount: null, deadline: "2026-07-31", status: "EXPIRED", viewCount: 15640, submittedAt: "2026-07-31T02:00:00.000Z", reviewerId: "Minh Châu", isFeatured: false, organization: { id: "org-7", name: "Fulbright · HB-2026-0094", status: "VERIFIED", verified: true }, _count: { applications: 318 } },
-  { id: "mock-8", title: "Học bổng ABC Education Group", type: "Y khoa", country: "Canada", region: "Cử nhân", amount: null, deadline: "2026-10-10", status: "REJECTED", viewCount: 0, submittedAt: "2026-08-07T02:00:00.000Z", reviewerId: "Tuấn Hải", isFeatured: false, organization: { id: "org-8", name: "ABC Education · HB-2026-0121", status: "PENDING", verified: false }, _count: { applications: 0 } },
-];
-
-function createMockScholarshipDetail(id: string): ScholarshipDetail | null {
-  const row = scholarshipMockRows.find((item) => item.id === id);
-  if (!row) return null;
-
-  return {
-    ...row,
-    summary: "Học bổng dành cho ứng viên phù hợp với điều kiện của chương trình.",
-    description: "Thông tin chi tiết về chương trình học bổng, điều kiện tham gia và hồ sơ cần chuẩn bị.",
-    eligibility: null,
-    requiredDocuments: [],
-    rejectionReason: row.status === "REJECTED" ? "Chưa đáp ứng yêu cầu của chương trình." : null,
-    creator: { id: row.organization.id, email: null, profile: { fullName: row.organization.name } },
-    applications: [],
-    history: [],
-    revisions: [],
-  };
-}
 
 const scholarshipUnitOptions = [
   "Đơn vị",
@@ -126,9 +116,15 @@ const statusStyle: Record<string, { label: string; badge: string; dot: string }>
   PUBLISHED: { label: "Đang hiển thị", badge: "bg-[#E4F5EE] text-[#0B7A57]", dot: "bg-[#0F9D6E]" },
   EXPIRED: { label: "Đã hết hạn", badge: "bg-[#F0EFED] text-[#5F5C58]", dot: "bg-[#7D7A75]" },
   REJECTED: { label: "Từ chối", badge: "bg-[#FCE9E7] text-[#D63939]", dot: "bg-[#D63939]" },
+  CHANGES_REQUESTED: { label: "Cần chỉnh sửa", badge: "bg-[#EAF1FC] text-[#2A5ADB]", dot: "bg-[#2A5ADB]" },
   DRAFT: { label: "Nháp", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
   REMOVED: { label: "Đã gỡ", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
 };
+// status ("active"/"inactive"/"expired", dùng cho tab PUBLISHED/EXPIRED) chỉ diễn đạt is_active+deadline.
+// Các tab còn lại (PENDING_REVIEW/REJECTED/CHANGES_REQUESTED) phải lọc bằng reviewStatus thật, không thể
+// suy ra từ is_active (một học bổng inactive có thể đang pending HOẶC rejected HOẶC đối tác tự đóng đơn
+// một học bổng đã duyệt — 3 trạng thái rất khác nhau).
+const reviewStatusParam: Record<string, string> = { PENDING_REVIEW: "pending", REJECTED: "rejected", CHANGES_REQUESTED: "changes_requested" };
 const rejectionReasons = [
   "Thiếu minh chứng nguồn chính thức",
   "Thông tin hạn chót không khớp trang nguồn",
@@ -164,7 +160,8 @@ export function ScholarshipManagement() {
   }, [selectedId]);
 
   const queryString = useMemo(() => new URLSearchParams({
-    status: status === "PUBLISHED" ? "active" : status === "EXPIRED" ? "expired" : "inactive", page: String(page), pageSize: "20", ...(query ? { q: query } : {}),
+    ...(status === "PUBLISHED" ? { status: "active" } : status === "EXPIRED" ? { status: "expired" } : reviewStatusParam[status] ? { reviewStatus: reviewStatusParam[status] } : {}),
+    page: String(page), pageSize: "20", ...(query ? { q: query } : {}),
   }).toString(), [page, query, status]);
   const scholarships = useQuery({
     queryKey: ["admin-scholarships", queryString],
@@ -183,34 +180,37 @@ export function ScholarshipManagement() {
     queryKey: ["admin-scholarship", selectedId],
     enabled: Boolean(selectedId),
     queryFn: async () => {
-      if (selectedId?.startsWith("mock-")) {
-        const mockDetail = createMockScholarshipDetail(selectedId);
-        if (!mockDetail) throw new Error("Không tìm thấy học bổng.");
-        return mockDetail;
-      }
       const response = await authClient.fetch(`/api/v1/admin/scholarships/${selectedId}`);
       if (!response.ok) throw new Error("Không thể tải nội dung học bổng.");
       const raw = await response.json() as BackendScholarship & Record<string, unknown>;
       const row = normalizeScholarship(raw);
-      return { ...row, summary: raw.description, description: raw.description, eligibility: raw.majors ?? null, requiredDocuments: raw.requiredCertificates ?? [], rejectionReason: null, creator: { id: row.organization.id, email: null, profile: { fullName: row.organization.name } }, applications: [], history: [], revisions: [] } as ScholarshipDetail;
+      return { ...row, summary: raw.description, description: raw.description, eligibility: raw.majors ?? null, requiredDocuments: raw.requiredCertificates ?? [], rejectionReason: row.reviewReason, creator: { id: row.organization.id, email: null, profile: { fullName: row.organization.name } }, applications: [], history: (raw as { history?: Array<{ id: string; action: string; reason?: string | null; createdAt: string }> }).history ?? [], revisions: [] } as ScholarshipDetail;
     },
   });
+  // Hệ thống chỉ có 4 vai trò thật (candidate/partner/mentor/admin — không có "MODERATOR"), và người
+  // duyệt học bổng chỉ hợp lý là tài khoản admin. Trước đây map nhầm "MODERATOR" sang role=mentor (trùng
+  // tên gần giống, không phải vai trò kiểm duyệt), khiến dropdown gán người phụ trách liệt kê cả mentor —
+  // không có ý nghĩa gì với việc duyệt học bổng.
   const reviewers = useQuery({
     queryKey: ["admin-scholarship-reviewers"],
     queryFn: async () => {
-      const responses = await Promise.all(["ADMIN", "MODERATOR"].map(async (role) => {
-        const response = await authClient.fetch(`/api/v1/admin/users?role=${role === "ADMIN" ? "admin" : "mentor"}&status=active&pageSize=100`);
-        if (!response.ok) throw new Error("Không thể tải danh sách người duyệt.");
-        return response.json() as Promise<ReviewerList>;
-      }));
-      return responses.flatMap((response) => response.items);
+      const response = await authClient.fetch(`/api/v1/admin/users?role=admin&status=active&pageSize=100`);
+      if (!response.ok) throw new Error("Không thể tải danh sách người duyệt.");
+      return (await response.json() as ReviewerList).items;
     },
   });
+  // "REMOVE" (nút "Gỡ tin"/"Xóa" hàng loạt) không có action riêng ở backend (chỉ approve/reject/
+  // request_changes) — gần nghĩa nhất là "reject" (gỡ khỏi trang công khai kèm lý do), giữ nguyên map
+  // như vậy. Trước đây REQUEST_CHANGES cũng bị gộp chung vào "reject" — bug thật: bấm "Yêu cầu sửa" âm
+  // thầm từ chối học bổng thay vì đúng ý định, sửa lại map đủ 1-1 dưới đây.
+  const decisionActionMap: Record<"APPROVE" | "REJECT" | "REQUEST_CHANGES" | "REMOVE", "approve" | "reject" | "request_changes"> = {
+    APPROVE: "approve", REJECT: "reject", REQUEST_CHANGES: "request_changes", REMOVE: "reject",
+  };
   const decision = useMutation({
     mutationFn: async ({ id, action, note = reason }: { id: string; action: "APPROVE" | "REJECT" | "REQUEST_CHANGES" | "REMOVE"; note?: string }) => {
       const response = await authClient.fetch(`/api/v1/admin/scholarships/${id}/decision`, {
         method: "POST",
-        body: JSON.stringify({ action: action === "APPROVE" ? "approve" : "reject", reason: note || undefined }),
+        body: JSON.stringify({ action: decisionActionMap[action], reason: note || undefined }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
@@ -296,7 +296,6 @@ export function ScholarshipManagement() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const useMockData = false;
   const deadlineFilter = params.get("deadline");
   const unitFilter = params.get("unit");
   const unitOptions = scholarshipUnitOptions;
@@ -307,6 +306,7 @@ export function ScholarshipManagement() {
     return item.status === "PUBLISHED" && days >= 0 && days <= 10;
   });
   const visibleRows = filteredRows.filter((item) => !unitFilter || item.organization.name.startsWith(unitFilter));
+  const reviewerEmailById = new Map((reviewers.data ?? []).map((reviewer) => [reviewer.id, reviewer.email ?? reviewer.id]));
   const counts = scholarships.data?.counts ?? {};
   const soonCount = (scholarships.data?.items ?? []).filter((item) => {
     if (!item.deadline) return false;
@@ -319,6 +319,7 @@ export function ScholarshipManagement() {
     { label: "Sắp hết hạn", value: "PUBLISHED" as ScholarshipStatus, count: soonCount, detail: "còn dưới 10 ngày", dot: "bg-[#2783DE]", deadline: "soon" },
     { label: "Đã hết hạn", value: "EXPIRED" as ScholarshipStatus, count: counts.EXPIRED ?? 0, detail: "cần lưu trữ hoặc gia hạn", dot: "bg-[#7D7A75]" },
     { label: "Từ chối", value: "REJECTED" as ScholarshipStatus, count: counts.REJECTED ?? 0, detail: "trong 30 ngày", dot: "bg-[#D63939]" },
+    { label: "Cần chỉnh sửa", value: "CHANGES_REQUESTED" as ScholarshipStatus, count: counts.CHANGES_REQUESTED ?? 0, detail: "đang chờ đối tác cập nhật", dot: "bg-[#2A5ADB]" },
   ];
   const allRowsSelected = visibleRows.length > 0 && visibleRows.every((item) => selectedRows.has(item.id));
   const toggleRowSelection = (id: string) => setSelectedRows((current) => {
@@ -348,7 +349,7 @@ export function ScholarshipManagement() {
         </div>
       </div>
 
-      <div className="grid overflow-hidden rounded-[10px] border border-[#E6E5E3] bg-white sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid overflow-hidden rounded-[10px] border border-[#E6E5E3] bg-white sm:grid-cols-2 xl:grid-cols-6">
         {statusCards.map((card) => {
           const active = status === card.value && (card.deadline ? deadlineFilter === card.deadline : !deadlineFilter);
           return <button key={`${card.label}-${card.deadline ?? "all"}`} type="button" onClick={() => setParams({ status: card.value, deadline: card.deadline, page: "1" })} className={cn("border-r border-[#E6E5E3] border-t-[3px] border-t-transparent px-[18px] py-3.5 text-left transition hover:bg-[#FCFCFB] last:border-r-0", active && "border-t-[#0F9D6E] bg-[#E4F5EE]")}>
@@ -401,7 +402,7 @@ export function ScholarshipManagement() {
                 <td className="px-3.5 py-3 text-right text-[13px] tabular-nums">{item._count.applications}</td>
                 <td className="px-3.5 py-3 text-right text-[13px] tabular-nums">{item.viewCount.toLocaleString("vi-VN")}</td>
                 <td className="px-3.5 py-3"><span className={cn("inline-flex items-center gap-2 whitespace-nowrap text-[13px] font-medium", isSoon ? "text-[#D5803B]" : item.status === "PUBLISHED" ? "text-[#0F9D6E]" : item.status === "REJECTED" ? "text-[#D63939]" : item.status === "EXPIRED" ? "text-[#7D7A75]" : "text-[#A4602A]")}><i className={cn("h-2.5 w-2.5 rounded-full", isSoon ? "bg-[#F59E0B]" : item.status === "PUBLISHED" ? "bg-[#2FB344]" : item.status === "REJECTED" ? "bg-[#D63939]" : item.status === "EXPIRED" ? "bg-[#7D7A75]" : "bg-[#F59E0B]")} />{isSoon ? "Sắp hết hạn" : style.label}</span></td>
-                <td className="whitespace-nowrap px-3.5 py-3 text-[13px]">{item.reviewerId ? <span className="flex items-center gap-2"><i className="grid h-6 w-6 place-items-center rounded-full bg-[#F0EFED] text-[10px] font-bold">{item.reviewerId.split(" ").map((part) => part[0]).slice(-2).join("")}</i>{item.reviewerId}</span> : <span className="text-[#7D7A75]">Chưa gán</span>}</td>
+                <td className="whitespace-nowrap px-3.5 py-3 text-[13px]">{item.reviewerId ? <span className="flex items-center gap-2"><i className="grid h-6 w-6 place-items-center rounded-full bg-[#F0EFED] text-[10px] font-bold">{(reviewerEmailById.get(item.reviewerId) ?? "??").slice(0, 2).toUpperCase()}</i>{reviewerEmailById.get(item.reviewerId) ?? item.reviewerId}</span> : <span className="text-[#7D7A75]">Chưa gán</span>}</td>
                 <td className="whitespace-nowrap px-3.5 py-3 text-xs text-[#7D7A75]">{hours < 24 ? `${Math.max(1, Math.floor(hours))} giờ trước` : `${Math.floor(hours / 24)} ngày trước`}</td>
                 <td className="whitespace-nowrap px-2 py-2"><div className="flex shrink-0 items-center gap-1">
                   {item.status === "PENDING_REVIEW" && <>
@@ -415,7 +416,7 @@ export function ScholarshipManagement() {
           </table>
         </div>
         <div className="flex flex-wrap items-center gap-3 border-t border-[#E6E5E3] bg-[#F9F8F7] px-4 py-3 text-[12.5px] text-[#7D7A75]">
-          <span>Hiển thị {visibleRows.length} trong tổng {useMockData ? scholarshipMockRows.length : scholarships.data?.pagination.total ?? 0} tin · đang lọc theo {deadlineFilter === "soon" ? "sắp hết hạn" : statusStyle[status]?.label.toLowerCase()}</span>
+          <span>Hiển thị {visibleRows.length} trong tổng {scholarships.data?.pagination.total ?? 0} tin · đang lọc theo {deadlineFilter === "soon" ? "sắp hết hạn" : statusStyle[status]?.label.toLowerCase()}</span>
           <div className="ml-auto flex items-center gap-1.5"><select className="h-8 rounded-md border border-[#E6E5E3] bg-white px-2"><option>20 dòng</option><option>50 dòng</option><option>100 dòng</option></select><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">‹</button><button className="h-8 min-w-8 rounded-md border border-[#0F9D6E] bg-[#0F9D6E] font-semibold text-white">1</button><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">2</button><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">3</button><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">›</button></div>
         </div>
       </Card>
@@ -447,6 +448,13 @@ export function ScholarshipManagement() {
                 <p className="mt-5 whitespace-pre-wrap text-sm leading-7">{detail.data.summary}</p>
                 <div className="prose prose-sm mt-5 max-w-none whitespace-pre-wrap dark:prose-invert">{detail.data.description}</div>
               </article>
+
+              {(detail.data.status === "REJECTED" || detail.data.status === "CHANGES_REQUESTED") && detail.data.rejectionReason && (
+                <div className={cn("rounded-lg border p-3 text-sm", detail.data.status === "REJECTED" ? "border-red-300 bg-red-50 text-red-700" : "border-blue-300 bg-blue-50 text-blue-700")}>
+                  <p className="font-semibold">{detail.data.status === "REJECTED" ? "Lý do từ chối gần nhất" : "Yêu cầu chỉnh sửa gần nhất"}</p>
+                  <p className="mt-1">&ldquo;{detail.data.rejectionReason}&rdquo;</p>
+                </div>
+              )}
 
               {!detail.data.organization.verified && (
                 <div className="flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
@@ -501,7 +509,7 @@ export function ScholarshipManagement() {
                 <p className="text-sm text-[#8795A7]">Kiểm tra các tiêu chí trước khi xuất bản học bổng.</p>
                 <div className="space-y-2">{(checklistItems.length ? checklistItems : ["Thông tin học bổng đầy đủ", "Đơn vị cấp đã xác minh KYC", "Hạn chót và điều kiện hợp lệ", "Tài liệu đính kèm đã kiểm tra"]).map((item) => <label key={item} className="flex items-center gap-3 rounded-md border border-[#E5E7EB] p-3 text-sm"><input type="checkbox" checked={checklist.has(item)} onChange={() => setChecklist((current) => { const next = new Set(current); next.has(item) ? next.delete(item) : next.add(item); return next; })} className="h-4 w-4 accent-[#0F9D6E]" />{item}</label>)}</div>
               </section>}
-              {detailTab === "history" && <section className="rounded-lg border border-[#E5E7EB] p-4"><h3 className="mb-4 font-semibold text-[#26384D]">Lịch sử xử lý</h3><div className="space-y-3">{(detail.data.history.length ? detail.data.history : [{ id: "empty", action: "Chưa có lịch sử xử lý", metadata: null, createdAt: new Date().toISOString() }]).map((entry) => <div key={entry.id} className="border-b border-[#F0F2F4] pb-3 last:border-0"><p className="text-sm text-[#52657A]">{entry.action}</p><p className="mt-1 text-xs text-[#94A3B8]">{formatDate(entry.createdAt)}</p></div>)}</div></section>}
+              {detailTab === "history" && <section className="rounded-lg border border-[#E5E7EB] p-4"><h3 className="mb-4 font-semibold text-[#26384D]">Lịch sử xử lý</h3><div className="space-y-3">{(detail.data.history.length ? detail.data.history : [{ id: "empty", action: "Chưa có lịch sử xử lý", reason: null, createdAt: new Date().toISOString() }]).map((entry) => <div key={entry.id} className="border-b border-[#F0F2F4] pb-3 last:border-0"><p className="text-sm text-[#52657A]">{entry.action}</p>{entry.reason && <p className="mt-0.5 text-xs italic text-[#7D7A75]">&ldquo;{entry.reason}&rdquo;</p>}<p className="mt-1 text-xs text-[#94A3B8]">{formatDate(entry.createdAt)}</p></div>)}</div></section>}
               {detailTab === "applications" && <section className="rounded-lg border border-[#E5E7EB] p-4"><div className="mb-4 flex items-center justify-between"><h3 className="font-semibold text-[#26384D]">Hồ sơ nộp</h3><span className="text-sm text-[#8795A7]">{detail.data.applications.length || detail.data._count.applications} hồ sơ</span></div>{detail.data.applications.length ? <div className="space-y-2">{detail.data.applications.map((application) => <div key={application.id} className="flex items-center justify-between rounded-md bg-[#F8FAFC] px-3 py-2 text-sm"><span>{application.id}</span><span className="text-[#64748B]">{application.status}</span></div>)}</div> : <p className="text-sm text-[#8795A7]">Chưa có hồ sơ nộp để hiển thị.</p>}</section>}
               {detailTab === "notes" && <section className="space-y-3 rounded-lg border border-[#E5E7EB] p-4"><h3 className="font-semibold text-[#26384D]">Ghi chú nội bộ</h3><Textarea value={internalNote} onChange={(event) => setInternalNote(event.target.value)} placeholder="Thêm ghi chú chỉ dành cho nhân viên quản trị…" /><Button type="button" className="bg-[#0F9D6E] text-white hover:bg-[#087F68]" onClick={() => toast.success("Đã lưu ghi chú nội bộ.")}>Lưu ghi chú</Button></section>}
             </div>

@@ -71,7 +71,7 @@ export const ADMIN_NAVIGATION: Array<{ label: string; items: NavigationItem[] }>
       { label: "Nhật ký thao tác", href: "/admin/audit-logs", icon: History },
       { label: "Thùng rác", href: "/admin/trash", icon: Trash2 },
       { label: "Sức khỏe hệ thống", href: "/admin/system/health", icon: Activity },
-      { label: "BullMQ jobs", href: "/admin/system/jobs", icon: HardDrive },
+      { label: "Hàng đợi job", href: "/admin/system/jobs", icon: HardDrive },
       { label: "Email đã gửi", href: "/admin/system/emails-sent", icon: MailCheck },
     ],
   },

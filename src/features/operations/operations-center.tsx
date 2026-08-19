@@ -89,18 +89,31 @@ function Health() {
 }
 function HealthCard({ title, status, detail }: { title: string; status?: string; detail?: string }) { const good = status === "up" || status === "configured"; return <Card><CardContent className="p-6"><div className="flex items-center justify-between"><h2 className="font-semibold">{title}</h2><span className={`h-3 w-3 rounded-full ${good ? "bg-emerald-500" : "bg-red-500"}`} /></div><p className="mt-3 text-2xl font-bold">{status ?? "Đang kiểm tra"}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>; }
 
+type AdminJobRow = { id: string; name: string; state: string; attemptsMade: number; failedReason: string | null; timestamp: number };
+type BackendAdminJob = { id: string; type: string; status: string; attempts: number; error: string | null; createdAt: string };
+const jobStatusOrder = ["pending", "processing", "completed", "failed"] as const;
+
+function normalizeJobs(data: { items: BackendAdminJob[] }): { counts: Record<string, number>; items: AdminJobRow[] } {
+  const items = data.items.map((item) => ({ id: item.id, name: item.type, state: item.status, attemptsMade: item.attempts, failedReason: item.error, timestamp: new Date(item.createdAt).getTime() }));
+  const counts: Record<string, number> = { pending: 0, processing: 0, completed: 0, failed: 0 };
+  for (const item of items) counts[item.state] = (counts[item.state] ?? 0) + 1;
+  return { counts, items };
+}
+
 function Jobs() {
   const queryClient = useQueryClient();
+  // Hàng đợi thật là bảng Postgres `admin_jobs` do worker.ts (Backend-for-admin) xử lý bằng polling —
+  // KHÔNG dùng BullMQ/Redis, không có cron đặt tên riêng (chỉ setInterval theo WORKER_INTERVAL_MS).
   const query = useQuery({ queryKey: ["admin-jobs"], queryFn: async () => {
-    const response = await authClient.fetch("/api/v1/admin/system/jobs");
+    const response = await authClient.fetch("/api/v1/admin/jobs?pageSize=100");
     if (!response.ok) throw new Error("Không thể tải trạng thái job.");
-    return response.json() as Promise<{ provider: string; note: string; counts: Record<string, number>; cron: Array<{ name: string; schedule: string; active: boolean; pendingSchedules?: number }>; items: Array<{ id: string; name: string; state: string; attemptsMade: number; failedReason: string | null; timestamp: number }> }>;
+    return normalizeJobs(await response.json() as { items: BackendAdminJob[] });
   } });
   const retry = useMutation({ mutationFn: async (id: string) => {
-    const response = await authClient.fetch(`/api/v1/admin/system/jobs/${id}/retry`, { method: "POST" });
-    if (!response.ok) throw new Error("Không thể thử lại job.");
+    const response = await authClient.fetch(`/api/v1/admin/jobs/${id}/retry`, { method: "POST" });
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? "Không thể thử lại job.");
   }, onSuccess: async () => { toast.success("Đã đưa job vào hàng đợi thử lại."); await queryClient.invalidateQueries({ queryKey: ["admin-jobs"] }); }, onError: (error: Error) => toast.error(error.message) });
-  const columns: readonly DataTableColumn<{ id: string; name: string; state: string; attemptsMade: number; failedReason: string | null; timestamp: number }>[] = [
+  const columns: readonly DataTableColumn<AdminJobRow>[] = [
     { key: "job", header: "Job", cell: (item) => <div><p className="font-semibold">{item.name}</p><p className="text-xs text-muted-foreground">{item.id}</p></div> },
     { key: "state", header: "Trạng thái", cell: (item) => <Badge variant={item.state === "failed" ? "destructive" : "secondary"}>{item.state}</Badge> },
     { key: "attempts", header: "Lần chạy", cell: (item) => item.attemptsMade },
@@ -108,7 +121,7 @@ function Jobs() {
     { key: "time", header: "Tạo lúc", cell: (item) => formatDate(new Date(item.timestamp).toISOString(), "dd/MM HH:mm") },
     { key: "action", header: "", cell: (item) => item.state === "failed" ? <Button size="sm" onClick={() => retry.mutate(item.id)}>Thử lại</Button> : null },
   ];
-  return <div className="mx-auto max-w-5xl"><PageHeader title="BullMQ jobs" description="Theo dõi hàng đợi, cron, lỗi và thử lại job; payload OTP không bao giờ hiển thị." icon={HardDrive} /><div className="grid gap-4 sm:grid-cols-5">{Object.entries(query.data?.counts ?? { waiting: 0, active: 0, failed: 0, delayed: 0, completed: 0 }).map(([key, value]) => <Card key={key}><CardContent className="p-6"><p className="text-sm text-muted-foreground">{key}</p><p className="mt-2 text-3xl font-bold">{value}</p></CardContent></Card>)}</div><div className="mt-4 grid gap-3 sm:grid-cols-2">{(query.data?.cron ?? []).map((item) => <Card key={item.name}><CardContent className="flex items-center justify-between p-5"><div><p className="font-semibold">{item.name}</p><p className="text-xs text-muted-foreground">{item.schedule}{item.pendingSchedules !== undefined ? ` · ${item.pendingSchedules} lịch đang bật` : ""}</p></div><Badge variant={item.active ? "default" : "secondary"}>{item.active ? "Đang chạy" : "Tắt"}</Badge></CardContent></Card>)}</div><Card className="mt-4 overflow-hidden"><DataTable columns={columns} rows={query.data?.items ?? []} getRowId={(item) => item.id} loading={query.isLoading} error={query.error instanceof Error ? query.error.message : null} /></Card><p className="mt-3 text-xs text-muted-foreground">{query.data?.note}</p></div>;
+  return <div className="mx-auto max-w-5xl"><PageHeader title="Hàng đợi job" description="Bảng admin_jobs (email/notification/OTP), xử lý bởi worker.ts theo polling — không có Redis/BullMQ. Payload OTP không bao giờ hiển thị." icon={HardDrive} /><div className="grid gap-4 sm:grid-cols-4">{jobStatusOrder.map((key) => <Card key={key}><CardContent className="p-6"><p className="text-sm text-muted-foreground">{key}</p><p className="mt-2 text-3xl font-bold">{query.data?.counts[key] ?? 0}</p></CardContent></Card>)}</div><Card className="mt-4 overflow-hidden"><DataTable columns={columns} rows={query.data?.items ?? []} getRowId={(item) => item.id} loading={query.isLoading} error={query.error instanceof Error ? query.error.message : null} /></Card><p className="mt-3 text-xs text-muted-foreground">Tự động đóng học bổng hết hạn chạy độc lập (AUTO_EXPIRE_INTERVAL_MS), không đi qua hàng đợi này.</p></div>;
 }
 
 type EmailDelivery = { id: string; recipient: string; type: string; subject: string; status: string; errorMessage: string | null; sentAt: string | null; createdAt: string };

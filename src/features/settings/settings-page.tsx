@@ -24,44 +24,104 @@ export function SettingsPage({ section }: { section: "taxonomies" | "emails" | "
   return <Profile />;
 }
 
-type Taxonomy = { id: string; type: string; name: string; slug: string; parentId: string | null; sortOrder: number; active: boolean; usageCount: number };
+type MajorGroup = { id: number; code: string; name: string; major_count: number };
+type Major = { id: number; code: string; name: string; group_id: number; group_name: string };
 
+// Thay UI "Danh mục" chung chung (cây cha-con + gộp tham chiếu — không khớp dữ liệu thật, không endpoint
+// nào tồn tại) bằng đúng 2 model thật trong hệ thống: MajorGroup (nhóm ngành) và Major (ngành học), CRUD
+// qua module majors/ mới thêm ở Backend-for-admin (/admin/majors, /admin/major-groups).
 function Taxonomies() {
   const queryClient = useQueryClient();
-  const [type, setType] = useState("MAJOR");
-  const [name, setName] = useState("");
-  const [parentId, setParentId] = useState("");
-  const [mergeTargetId, setMergeTargetId] = useState("");
-  const query = useQuery({ queryKey: ["admin-taxonomies"], queryFn: async () => {
-    const response = await authClient.fetch("/api/v1/admin/settings/taxonomies");
-    if (!response.ok) throw new Error("Không thể tải danh mục.");
-    return response.json() as Promise<Taxonomy[]>;
+  const [groupCode, setGroupCode] = useState("");
+  const [groupName, setGroupName] = useState("");
+  const [majorCode, setMajorCode] = useState("");
+  const [majorName, setMajorName] = useState("");
+  const [majorGroupId, setMajorGroupId] = useState("");
+
+  const groups = useQuery({ queryKey: ["admin-major-groups"], queryFn: async () => {
+    const response = await authClient.fetch("/api/v1/admin/major-groups");
+    if (!response.ok) throw new Error("Không thể tải nhóm ngành.");
+    return (await response.json() as { items: MajorGroup[] }).items;
   } });
-  const save = useMutation({ mutationFn: async () => {
-    const response = await authClient.fetch("/api/v1/admin/settings/taxonomies", { method: "POST", body: JSON.stringify({ type, name, ...(parentId ? { parentId } : {}) }) });
-    if (!response.ok) throw new Error("Không thể thêm danh mục.");
-  }, onSuccess: async () => { setName(""); toast.success("Đã thêm danh mục."); await queryClient.invalidateQueries({ queryKey: ["admin-taxonomies"] }); }, onError: (error: Error) => toast.error(error.message) });
-  const update = useMutation({ mutationFn: async ({ item, nextName, sortOrder }: { item: Taxonomy; nextName?: string; sortOrder?: number }) => {
-    const response = await authClient.fetch(`/api/v1/admin/settings/taxonomies/${item.id}`, { method: "PUT", body: JSON.stringify({ type: item.type, name: nextName ?? item.name, parentId: item.parentId || undefined, sortOrder: sortOrder ?? item.sortOrder }) });
-    if (!response.ok) throw new Error("Không thể cập nhật danh mục.");
-  }, onSuccess: async () => { toast.success("Đã cập nhật danh mục."); await queryClient.invalidateQueries({ queryKey: ["admin-taxonomies"] }); }, onError: (error: Error) => toast.error(error.message) });
-  const merge = useMutation({ mutationFn: async (sourceId: string) => {
-    if (!mergeTargetId) throw new Error("Hãy chọn danh mục đích.");
-    const response = await authClient.fetch("/api/v1/admin/settings/taxonomies/merge", { method: "POST", body: JSON.stringify({ sourceId, targetId: mergeTargetId }) });
-    if (!response.ok) throw new Error((await response.json().catch(() => null) as { message?: string } | null)?.message ?? "Không thể gộp danh mục.");
-  }, onSuccess: async () => { setMergeTargetId(""); toast.success("Đã chuyển tham chiếu và gộp trong transaction."); await queryClient.invalidateQueries({ queryKey: ["admin-taxonomies"] }); }, onError: (error: Error) => toast.error(error.message) });
-  const remove = useMutation({ mutationFn: async (id: string) => {
-    const response = await authClient.fetch(`/api/v1/admin/settings/taxonomies/${id}`, { method: "DELETE" });
-    if (!response.ok) { const payload = await response.json().catch(() => null) as { message?: string } | null; throw new Error(payload?.message ?? "Không thể xóa danh mục."); }
-  }, onSuccess: async () => { toast.success("Đã xóa danh mục."); await queryClient.invalidateQueries({ queryKey: ["admin-taxonomies"] }); }, onError: (error: Error) => toast.error(error.message) });
-  const columns: readonly DataTableColumn<Taxonomy>[] = [
-    { key: "name", header: "Danh mục", cell: (item) => <div><p className="font-semibold">{item.name}</p><p className="text-xs text-muted-foreground">{item.slug}</p></div> },
-    { key: "type", header: "Loại", cell: (item) => <Badge variant="secondary">{item.type}</Badge> },
-    { key: "usage", header: "Đang dùng", cell: (item) => item.usageCount },
-    { key: "order", header: "Thứ tự", cell: (item) => item.sortOrder },
-    { key: "action", header: "", cell: (item) => <div className="flex justify-end gap-1"><Button size="sm" variant="ghost" onClick={() => { const nextName = window.prompt("Tên mới", item.name); if (nextName?.trim()) update.mutate({ item, nextName: nextName.trim() }); }}>Sửa</Button><Button size="sm" variant="ghost" onClick={() => update.mutate({ item, sortOrder: Math.max(0, item.sortOrder - 1) })}>↑</Button><Button size="sm" variant="ghost" onClick={() => update.mutate({ item, sortOrder: item.sortOrder + 1 })}>↓</Button><Button size="sm" variant="outline" disabled={!mergeTargetId || mergeTargetId === item.id} onClick={() => merge.mutate(item.id)}>Gộp</Button><Button size="icon" variant="ghost" disabled={item.usageCount > 0 || remove.isPending} onClick={() => remove.mutate(item.id)} title={item.usageCount ? `Đang dùng bởi ${item.usageCount} bản ghi` : "Xóa"}><Trash2 className="h-4 w-4" /></Button></div> },
+  const majors = useQuery({ queryKey: ["admin-majors"], queryFn: async () => {
+    const response = await authClient.fetch("/api/v1/admin/majors");
+    if (!response.ok) throw new Error("Không thể tải danh sách ngành.");
+    return (await response.json() as { items: Major[] }).items;
+  } });
+
+  const invalidate = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["admin-major-groups"] }),
+    queryClient.invalidateQueries({ queryKey: ["admin-majors"] }),
+  ]);
+  const errorMessage = async (response: Response, fallback: string) => (await response.json().catch(() => null) as { message?: string } | null)?.message ?? fallback;
+
+  const saveGroup = useMutation({ mutationFn: async () => {
+    const response = await authClient.fetch("/api/v1/admin/major-groups", { method: "POST", body: JSON.stringify({ code: groupCode.trim(), name: groupName.trim() }) });
+    if (!response.ok) throw new Error(await errorMessage(response, "Không thể thêm nhóm ngành."));
+  }, onSuccess: async () => { setGroupCode(""); setGroupName(""); toast.success("Đã thêm nhóm ngành."); await invalidate(); }, onError: (error: Error) => toast.error(error.message) });
+  const removeGroup = useMutation({ mutationFn: async (id: number) => {
+    const response = await authClient.fetch(`/api/v1/admin/major-groups/${id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(await errorMessage(response, "Không thể xóa nhóm ngành."));
+  }, onSuccess: async () => { toast.success("Đã xóa nhóm ngành."); await invalidate(); }, onError: (error: Error) => toast.error(error.message) });
+
+  const saveMajor = useMutation({ mutationFn: async () => {
+    if (!majorGroupId) throw new Error("Hãy chọn nhóm ngành.");
+    const response = await authClient.fetch("/api/v1/admin/majors", { method: "POST", body: JSON.stringify({ code: majorCode.trim(), name: majorName.trim(), group_id: Number(majorGroupId) }) });
+    if (!response.ok) throw new Error(await errorMessage(response, "Không thể thêm ngành."));
+  }, onSuccess: async () => { setMajorCode(""); setMajorName(""); toast.success("Đã thêm ngành học."); await invalidate(); }, onError: (error: Error) => toast.error(error.message) });
+  const renameMajor = useMutation({ mutationFn: async ({ id, name }: { id: number; name: string }) => {
+    const response = await authClient.fetch(`/api/v1/admin/majors/${id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    if (!response.ok) throw new Error(await errorMessage(response, "Không thể cập nhật ngành."));
+  }, onSuccess: async () => { toast.success("Đã cập nhật ngành học."); await invalidate(); }, onError: (error: Error) => toast.error(error.message) });
+  const removeMajor = useMutation({ mutationFn: async (id: number) => {
+    const response = await authClient.fetch(`/api/v1/admin/majors/${id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(await errorMessage(response, "Không thể xóa ngành."));
+  }, onSuccess: async () => { toast.success("Đã xóa ngành học."); await invalidate(); }, onError: (error: Error) => toast.error(error.message) });
+
+  const majorColumns: readonly DataTableColumn<Major>[] = [
+    { key: "name", header: "Ngành", cell: (item) => <div><p className="font-semibold">{item.name}</p><p className="text-xs text-muted-foreground">{item.code}</p></div> },
+    { key: "group", header: "Nhóm ngành", cell: (item) => <Badge variant="secondary">{item.group_name}</Badge> },
+    { key: "action", header: "", cell: (item) => <div className="flex justify-end gap-1">
+      <Button size="sm" variant="ghost" onClick={() => { const nextName = window.prompt("Tên ngành mới", item.name); if (nextName?.trim() && nextName.trim() !== item.name) renameMajor.mutate({ id: item.id, name: nextName.trim() }); }}>Sửa</Button>
+      <Button size="icon" variant="ghost" disabled={removeMajor.isPending} onClick={() => removeMajor.mutate(item.id)} title="Xóa"><Trash2 className="h-4 w-4" /></Button>
+    </div> },
   ];
-  return <div className="mx-auto max-w-[1200px]"><PageHeader title="Danh mục hệ thống" description="Cha-con, đổi thứ tự, chặn xóa khi đang dùng và gộp tham chiếu trong transaction." icon={Tags} /><Card className="overflow-hidden"><form className="grid gap-3 border-b p-4 sm:grid-cols-[180px_1fr_220px_auto]" onSubmit={(event) => { event.preventDefault(); save.mutate(); }}><Select value={type} onValueChange={setType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["MAJOR", "REGION", "COUNTRY", "SCHOLARSHIP_TYPE", "DOCUMENT_TYPE", "EDUCATION_LEVEL"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Tên danh mục mới" /><Select value={parentId || "none"} onValueChange={(value) => setParentId(value === "none" ? "" : value)}><SelectTrigger><SelectValue placeholder="Danh mục cha" /></SelectTrigger><SelectContent><SelectItem value="none">Không có cha</SelectItem>{(query.data ?? []).filter((item) => item.type === type).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select><Button disabled={!name.trim() || save.isPending}>Thêm</Button></form><div className="border-b p-4"><Select value={mergeTargetId || "none"} onValueChange={(value) => setMergeTargetId(value === "none" ? "" : value)}><SelectTrigger className="max-w-sm"><SelectValue placeholder="Chọn danh mục đích trước khi gộp" /></SelectTrigger><SelectContent><SelectItem value="none">Chọn danh mục đích</SelectItem>{(query.data ?? []).map((item) => <SelectItem key={item.id} value={item.id}>{item.type} · {item.name}</SelectItem>)}</SelectContent></Select></div><DataTable columns={columns} rows={query.data ?? []} getRowId={(item) => item.id} loading={query.isLoading} error={query.error instanceof Error ? query.error.message : null} /></Card></div>;
+
+  return <div className="mx-auto max-w-[1200px] space-y-4">
+    <PageHeader title="Danh mục ngành" description="Nhóm ngành và ngành học dùng chung cho toàn bộ học bổng — đối tác chọn từ danh mục này khi đăng học bổng, ứng viên chọn khi khai ngành mục tiêu." icon={Tags} />
+    <Card>
+      <CardHeader><CardTitle>Nhóm ngành</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <form className="grid gap-3 sm:grid-cols-[140px_1fr_auto]" onSubmit={(event) => { event.preventDefault(); saveGroup.mutate(); }}>
+          <Input value={groupCode} onChange={(event) => setGroupCode(event.target.value)} placeholder="Mã (vd. KT-CN)" />
+          <Input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Tên nhóm ngành mới" />
+          <Button disabled={!groupCode.trim() || !groupName.trim() || saveGroup.isPending}>Thêm nhóm</Button>
+        </form>
+        <div className="flex flex-wrap gap-2">
+          {(groups.data ?? []).map((group) => (
+            <span key={group.id} className="inline-flex items-center gap-2 rounded-full border bg-muted/40 py-1 pl-3 pr-1 text-sm">
+              {group.name} <span className="text-xs text-muted-foreground">({group.major_count})</span>
+              <Button size="icon" variant="ghost" className="h-6 w-6" disabled={group.major_count > 0 || removeGroup.isPending} onClick={() => removeGroup.mutate(group.id)} title={group.major_count > 0 ? `Còn ${group.major_count} ngành, hãy chuyển/xóa hết trước` : "Xóa nhóm"}><Trash2 className="h-3.5 w-3.5" /></Button>
+            </span>
+          ))}
+          {groups.isLoading && <p className="text-sm text-muted-foreground">Đang tải...</p>}
+        </div>
+      </CardContent>
+    </Card>
+    <Card className="overflow-hidden">
+      <CardHeader><CardTitle>Ngành học</CardTitle></CardHeader>
+      <form className="grid gap-3 border-b p-4 sm:grid-cols-[160px_1fr_200px_auto]" onSubmit={(event) => { event.preventDefault(); saveMajor.mutate(); }}>
+        <Input value={majorCode} onChange={(event) => setMajorCode(event.target.value)} placeholder="Mã ngành (vd. CNTT)" />
+        <Input value={majorName} onChange={(event) => setMajorName(event.target.value)} placeholder="Tên ngành mới" />
+        <Select value={majorGroupId || "none"} onValueChange={(value) => setMajorGroupId(value === "none" ? "" : value)}>
+          <SelectTrigger><SelectValue placeholder="Chọn nhóm ngành" /></SelectTrigger>
+          <SelectContent><SelectItem value="none">Chọn nhóm ngành</SelectItem>{(groups.data ?? []).map((group) => <SelectItem key={group.id} value={String(group.id)}>{group.name}</SelectItem>)}</SelectContent>
+        </Select>
+        <Button disabled={!majorCode.trim() || !majorName.trim() || !majorGroupId || saveMajor.isPending}>Thêm ngành</Button>
+      </form>
+      <DataTable columns={majorColumns} rows={majors.data ?? []} getRowId={(item) => String(item.id)} loading={majors.isLoading} error={majors.error instanceof Error ? majors.error.message : null} />
+    </Card>
+  </div>;
 }
 
 type EmailTemplate = { id: string; key: string; subject: string; content: string; variables: string[]; active: boolean; revisions: Array<{ id: string; createdAt: string }> };

@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Building2, Eye, RotateCw, Search, ZoomIn, ZoomOut } from "lucide-react";
+import { AlertTriangle, Building2, Eye, Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -11,23 +11,27 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth-client";
 import { formatDate } from "@/lib/utils";
 
-type PartnerStatus = "PENDING" | "VERIFIED" | "REJECTED" | "NEEDS_MORE_INFO" | "SUSPENDED";
+// PartnerProfile thật chỉ có 3 trạng thái duyệt (pending/approved/rejected) — không có "cần bổ sung
+// thông tin"/"tạm đình chỉ" trong schema, nên đã bỏ NEEDS_MORE_INFO/SUSPENDED khỏi type lẫn UI thay vì
+// giữ 2 nút bấm vào không làm gì (không endpoint nào hỗ trợ 2 hành động đó).
+type PartnerStatus = "PENDING" | "VERIFIED" | "REJECTED";
+// Xoá taxCode/representativeName/submittedAt/reviewerId/documents khỏi type — PartnerProfile không có
+// các cột này (không có mã số thuế, người đại diện, createdAt, reviewerId, hay hệ thống upload giấy tờ
+// KYC nào cả). Thêm industrySector/provinceCity/logoUrl — field thật đã có sẵn nhưng trước đây bị bỏ sót,
+// luôn trả null.
 type PartnerRow = {
   id: string;
   name: string;
-  type: string | null;
-  taxCode: string | null;
-  representativeName: string | null;
+  industrySector: string | null;
+  provinceCity: string | null;
+  logoUrl: string | null;
   status: PartnerStatus;
-  submittedAt: string | null;
-  reviewerId: string | null;
-  _count: { members: number; scholarships: number; documents: number };
+  _count: { members: number; scholarships: number };
 };
 type PartnerList = {
   items: PartnerRow[];
@@ -37,21 +41,23 @@ type PartnerList = {
 type PartnerDetail = PartnerRow & {
   website: string | null;
   description: string | null;
-  members: Array<{ user: { id: string; email: string | null; role: string; profile: { fullName: string | null } | null } }>;
+  foundingYear: number | null;
+  companySize: string | null;
+  headquartersAddress: string | null;
+  linkedinUrl: string | null;
+  facebookUrl: string | null;
+  members: Array<{ user: { id: string; email: string | null; role: string } }>;
   scholarships: Array<{ id: string; title: string; status: string; createdAt: string }>;
-  duplicates: Array<{ id: string; name: string; taxCode: string | null; status: string }>;
-  history: Array<{ id: string; action: string; metadata: unknown; createdAt: string }>;
-  documents: Array<{ id: string; type: string; fileName: string; contentType: string; size: number; signedUrl: string | null }>;
+  duplicates: Array<{ id: string; name: string; status: string }>;
+  history: Array<{ id: string; action: string; reason: string | null; createdAt: string }>;
 };
-type PartnerDocument = PartnerDetail["documents"][number];
 
 const tabs: Array<{ value: PartnerStatus; label: string }> = [
   { value: "PENDING", label: "Chờ xác minh" },
   { value: "VERIFIED", label: "Đã xác minh" },
   { value: "REJECTED", label: "Bị từ chối" },
-  { value: "NEEDS_MORE_INFO", label: "Yêu cầu bổ sung" },
-  { value: "SUSPENDED", label: "Tạm đình chỉ" },
 ];
+const backendStatus: Record<PartnerStatus, string> = { PENDING: "pending", VERIFIED: "approved", REJECTED: "rejected" };
 
 export function PartnerManagement() {
   const params = useSearchParams();
@@ -63,10 +69,7 @@ export function PartnerManagement() {
   const [search, setSearch] = useState(query);
   const [selectedId, setSelectedId] = useState<string | null>(params.get("selected"));
   const [reason, setReason] = useState("");
-  const [previewDocument, setPreviewDocument] = useState<PartnerDocument | null>(null);
-  const [rotation, setRotation] = useState(0);
-  const [zoom, setZoom] = useState(1);
-  const queryString = useMemo(() => new URLSearchParams({ status, page: String(page), pageSize: "20", query }).toString(), [page, query, status]);
+  const queryString = useMemo(() => new URLSearchParams({ status: backendStatus[status], page: String(page), pageSize: "20", ...(query ? { q: query } : {}) }).toString(), [page, query, status]);
 
   const partners = useQuery({
     queryKey: ["admin-partners", queryString],
@@ -87,7 +90,7 @@ export function PartnerManagement() {
     },
   });
   const decision = useMutation({
-    mutationFn: async (action: "VERIFY" | "REJECT" | "REQUEST_MORE_INFO" | "SUSPEND") => {
+    mutationFn: async (action: "VERIFY" | "REJECT") => {
       if (!selectedId) throw new Error("Chưa chọn tổ chức.");
       const response = await authClient.fetch(`/api/v1/admin/partners/${selectedId}/decision`, {
         method: "POST", body: JSON.stringify({ decision: action, reason: reason || undefined }),
@@ -112,13 +115,10 @@ export function PartnerManagement() {
     router.replace(`/admin/partners?${next.toString()}`, { scroll: false });
   };
   const columns: readonly DataTableColumn<PartnerRow>[] = [
-    { key: "name", header: "Tổ chức", cell: (item) => <button className="text-left" onClick={() => setSelectedId(item.id)}><p className="font-semibold hover:text-primary">{item.name}</p><p className="text-xs text-muted-foreground">{item.taxCode ?? "Chưa có mã số thuế"}</p></button> },
-    { key: "type", header: "Loại", cell: (item) => item.type ?? "—" },
-    { key: "representative", header: "Người đại diện", cell: (item) => item.representativeName ?? "—" },
-    { key: "submittedAt", header: "Ngày gửi", cell: (item) => item.submittedAt ? formatDate(item.submittedAt) : "—" },
-    { key: "documents", header: "Giấy tờ", cell: (item) => item._count.documents },
+    { key: "name", header: "Tổ chức", cell: (item) => <button className="flex items-center gap-2 text-left" onClick={() => setSelectedId(item.id)}>{item.logoUrl && <img src={item.logoUrl} alt="" className="h-6 w-6 rounded object-contain" />}<p className="font-semibold hover:text-primary">{item.name}</p></button> },
+    { key: "industry", header: "Lĩnh vực", cell: (item) => item.industrySector ?? "—" },
+    { key: "province", header: "Tỉnh/thành", cell: (item) => item.provinceCity ?? "—" },
     { key: "scholarships", header: "Tin đã đăng", cell: (item) => item._count.scholarships },
-    { key: "reviewer", header: "Người xử lý", cell: (item) => item.reviewerId ?? "Chưa gán" },
     { key: "view", header: "", cell: (item) => <Button variant="ghost" size="icon" onClick={() => setSelectedId(item.id)}><Eye className="h-4 w-4" /></Button> },
   ];
 
@@ -130,7 +130,7 @@ export function PartnerManagement() {
           {tabs.map((tab) => <Button key={tab.value} size="sm" variant={status === tab.value ? "default" : "ghost"} onClick={() => setParams({ status: tab.value, page: "1" })}>{tab.label}<Badge className="ml-1.5" variant="secondary">{partners.data?.counts[tab.value] ?? 0}</Badge></Button>)}
         </div>
         <form className="flex gap-2 border-b p-4" onSubmit={(event) => { event.preventDefault(); setParams({ query: search.trim() || undefined, page: "1" }); }}>
-          <div className="relative max-w-lg flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tên tổ chức hoặc mã số thuế…" /></div>
+          <div className="relative max-w-lg flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tên tổ chức…" /></div>
           <Button type="submit">Tìm kiếm</Button>
         </form>
         <DataTable columns={columns} rows={partners.data?.items ?? []} getRowId={(item) => item.id} loading={partners.isLoading} loadingVariant="skeleton" error={partners.error instanceof Error ? partners.error.message : null} onRetry={() => void partners.refetch()} emptyTitle="Chưa có đối tác ở trạng thái này" emptyDescription="Thay đổi bộ lọc trạng thái hoặc thử lại sau khi có hồ sơ KYC mới." page={partners.data?.pagination.page ?? page} pageCount={partners.data?.pagination.pageCount ?? 1} onPageChange={(value) => setParams({ page: String(value) })} footerLabel={partners.data ? `${partners.data.items.length} / ${partners.data.pagination.total} tổ chức` : "Đang tải"} />
@@ -149,50 +149,35 @@ export function PartnerManagement() {
             <div className="rounded-lg border p-5">
               <h2 className="text-xl font-bold">{detail.data.name}</h2>
               <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                <div><dt className="text-muted-foreground">Mã số thuế</dt><dd className="font-medium">{detail.data.taxCode ?? "Chưa cung cấp"}</dd></div>
-                <div><dt className="text-muted-foreground">Người đại diện</dt><dd className="font-medium">{detail.data.representativeName ?? "Chưa cung cấp"}</dd></div>
                 <div><dt className="text-muted-foreground">Website</dt><dd className="font-medium">{detail.data.website ?? "Chưa cung cấp"}</dd></div>
+                <div><dt className="text-muted-foreground">Lĩnh vực</dt><dd className="font-medium">{detail.data.industrySector ?? "Chưa cung cấp"}</dd></div>
+                <div><dt className="text-muted-foreground">Tỉnh/thành</dt><dd className="font-medium">{detail.data.provinceCity ?? "Chưa cung cấp"}</dd></div>
+                <div><dt className="text-muted-foreground">Năm thành lập</dt><dd className="font-medium">{detail.data.foundingYear ?? "Chưa cung cấp"}</dd></div>
+                <div><dt className="text-muted-foreground">Quy mô</dt><dd className="font-medium">{detail.data.companySize ?? "Chưa cung cấp"}</dd></div>
+                <div><dt className="text-muted-foreground">Trụ sở</dt><dd className="font-medium">{detail.data.headquartersAddress ?? "Chưa cung cấp"}</dd></div>
                 <div><dt className="text-muted-foreground">Thành viên</dt><dd className="font-medium">{detail.data.members.length}</dd></div>
               </dl>
             </div>
-            {detail.data.duplicates.length > 0 && <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/20 dark:text-red-300"><div className="flex gap-2 font-semibold"><AlertTriangle className="h-5 w-5" />Phát hiện tổ chức có thể trùng lặp</div>{detail.data.duplicates.map((item) => <p key={item.id} className="mt-2">{item.name} · {item.taxCode ?? "Không có MST"} · {item.status}</p>)}</div>}
-            <div>
-              <h3 className="mb-2 font-semibold">Giấy tờ pháp lý</h3>
-              {detail.data.documents.length === 0 ? <p className="rounded-lg border p-4 text-sm text-muted-foreground">Chưa có giấy tờ được tải lên.</p> : <div className="divide-y rounded-lg border">{detail.data.documents.map((document) => <div key={document.id} className="flex items-center justify-between gap-3 p-3 text-sm"><div><p className="font-medium">{document.fileName}</p><p className="text-xs text-muted-foreground">{document.type} · {Math.round(document.size / 1024)} KB</p></div>{document.signedUrl ? <Button variant="ghost" size="sm" onClick={() => { setPreviewDocument(document); setRotation(0); setZoom(1); }}>Xem tại trang</Button> : <span className="text-xs text-muted-foreground">Storage chưa cấu hình</span>}</div>)}</div>}
-            </div>
+            {detail.data.duplicates.length > 0 && <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/20 dark:text-red-300"><div className="flex gap-2 font-semibold"><AlertTriangle className="h-5 w-5" />Phát hiện tổ chức có thể trùng lặp</div>{detail.data.duplicates.map((item) => <p key={item.id} className="mt-2">{item.name} · {item.status}</p>)}</div>}
             <div>
               <h3 className="mb-2 font-semibold">Thành viên</h3>
-              <div className="divide-y rounded-lg border">{detail.data.members.map(({ user }) => <div key={user.id} className="p-3 text-sm"><p className="font-medium">{user.profile?.fullName ?? user.email ?? user.id}</p><p className="text-xs text-muted-foreground">{user.role}</p></div>)}</div>
+              <div className="divide-y rounded-lg border">{detail.data.members.map(({ user }) => <div key={user.id} className="p-3 text-sm"><p className="font-medium">{user.email ?? user.id}</p><p className="text-xs text-muted-foreground">{user.role}</p></div>)}</div>
             </div>
             <div>
-              <h3 className="mb-2 font-semibold">Lý do / giấy tờ cần bổ sung</h3>
-              <Textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Nêu rõ lý do hoặc danh sách giấy tờ còn thiếu…" />
+              <h3 className="mb-2 font-semibold">Lịch sử xử lý</h3>
+              {detail.data.history.length === 0 ? <p className="rounded-lg border p-4 text-sm text-muted-foreground">Chưa có lịch sử xử lý.</p> : <div className="divide-y rounded-lg border">{detail.data.history.map((entry) => <div key={entry.id} className="p-3 text-sm"><p className="font-medium">{entry.action}</p>{entry.reason && <p className="mt-0.5 text-xs italic text-muted-foreground">&ldquo;{entry.reason}&rdquo;</p>}<p className="mt-1 text-xs text-muted-foreground">{formatDate(entry.createdAt, "dd/MM/yyyy HH:mm")}</p></div>)}</div>}
+            </div>
+            <div>
+              <h3 className="mb-2 font-semibold">Lý do (bắt buộc khi từ chối)</h3>
+              <Textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Nêu rõ lý do từ chối…" />
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <Button disabled={decision.isPending} onClick={() => decision.mutate("VERIFY")}>Duyệt KYC</Button>
               <Button variant="destructive" disabled={!reason.trim() || decision.isPending} onClick={() => decision.mutate("REJECT")}>Từ chối</Button>
-              <Button variant="outline" disabled={!reason.trim() || decision.isPending} onClick={() => decision.mutate("REQUEST_MORE_INFO")}>Yêu cầu bổ sung</Button>
-              <Button variant="outline" disabled={!reason.trim() || decision.isPending} onClick={() => decision.mutate("SUSPEND")}>Tạm đình chỉ</Button>
             </div>
           </div>}
         </SheetContent>
       </Sheet>
-      <Dialog open={Boolean(previewDocument)} onOpenChange={(open) => !open && setPreviewDocument(null)}>
-        <DialogContent className="h-[90vh] max-w-5xl overflow-hidden">
-          <DialogHeader><DialogTitle>{previewDocument?.fileName}</DialogTitle></DialogHeader>
-          <div className="flex items-center gap-2 border-b pb-3">
-            <Button size="icon" variant="outline" onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}><ZoomOut className="h-4 w-4" /></Button>
-            <span className="text-sm">{Math.round(zoom * 100)}%</span>
-            <Button size="icon" variant="outline" onClick={() => setZoom((value) => Math.min(3, value + 0.25))}><ZoomIn className="h-4 w-4" /></Button>
-            {previewDocument?.contentType.startsWith("image/") && <Button size="icon" variant="outline" onClick={() => setRotation((value) => (value + 90) % 360)}><RotateCw className="h-4 w-4" /></Button>}
-          </div>
-          <div className="h-full overflow-auto rounded-lg bg-muted/40 p-4 text-center">
-            {previewDocument?.signedUrl && (previewDocument.contentType === "application/pdf"
-              ? <iframe title={previewDocument.fileName} src={previewDocument.signedUrl} className="h-full min-h-[65vh] w-full rounded bg-white" />
-              : <img src={previewDocument.signedUrl} alt={previewDocument.fileName} className="mx-auto max-w-none transition-transform" style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, transformOrigin: "top center" }} />)}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

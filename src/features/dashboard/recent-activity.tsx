@@ -1,33 +1,65 @@
 import { RefreshCw } from "lucide-react";
 
-const activities = [
-  { avatar: "TH", text: "Tuấn Hải đã đăng một học bổng mới", time: "2 phút trước", color: "bg-[#DDF4F0] text-[#159A88]" },
-  { avatar: "ND", text: "Người dùng mới đã đăng ký tài khoản", time: "18 phút trước", color: "bg-[#E4EEFF] text-[#2563B8]" },
-  { avatar: "KYC", text: "Đối tác đã hoàn tất xác minh KYC", time: "45 phút trước", color: "bg-[#FFF1D6] text-[#C47A12]" },
-  { avatar: "HS", text: "Một hồ sơ ứng tuyển vừa được nộp", time: "1 giờ trước", color: "bg-[#F0E8FF] text-[#7C4CC2]" },
-  { avatar: "TV", text: "Yêu cầu tư vấn mới vừa được gửi", time: "4 giờ trước", color: "bg-[#E2F3E8] text-[#2B9252]" },
-  { avatar: "BC", text: "Báo cáo vi phạm mới đã được tạo", time: "6 giờ trước", color: "bg-[#FFE4E4] text-[#C83B3B]" },
-];
+export type ActivityItem = { id: string; action: string; reason: string | null; actorEmail: string; targetId: string; createdAt: string };
 
-export function RecentActivity() {
+// action là chuỗi tự do dạng "resource.verb" (vd. "scholarship.approve", "partner.rejected",
+// "user.suspend") ghi trực tiếp bởi AdminService#recordAudit — không phải enum cố định, nên diễn giải
+// theo tiền tố thay vì liệt kê toàn bộ giá trị có thể có.
+const actionLabels: Record<string, string> = {
+  approve: "duyệt", approved: "duyệt", reject: "từ chối", rejected: "từ chối",
+  request_changes: "yêu cầu chỉnh sửa", pending: "chờ duyệt", won: "chọn trúng học bổng",
+  suspend: "tạm khoá", disable: "vô hiệu hoá", activate: "kích hoạt lại",
+  add_role: "thêm vai trò", remove_role: "gỡ vai trò", "sessions.revoked": "thu hồi phiên đăng nhập",
+  expired: "tự động đóng vì quá hạn", updated: "cập nhật",
+};
+const resourceLabels: Record<string, string> = {
+  scholarship: "Học bổng", partner: "Đối tác", user: "Người dùng", application: "Hồ sơ ứng tuyển",
+};
+const resourceColor: Record<string, string> = {
+  scholarship: "bg-[#DDF4F0] text-[#159A88]", partner: "bg-[#FFF1D6] text-[#C47A12]",
+  user: "bg-[#E4EEFF] text-[#2563B8]", application: "bg-[#F0E8FF] text-[#7C4CC2]",
+};
+
+function describe(action: string) {
+  const [resource, ...rest] = action.split(".");
+  const verbKey = rest.join(".").replace(/^bulk\./, "");
+  return { resource: resourceLabels[resource] ?? resource, verb: actionLabels[verbKey] ?? verbKey.replace(/_/g, " ") };
+}
+
+function timeAgo(iso: string) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return "vừa xong";
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  return `${Math.floor(hours / 24)} ngày trước`;
+}
+
+export function RecentActivity({ items }: { items: ActivityItem[] }) {
   return (
     <section className="rounded-[10px] border border-[#E5E7EB] bg-white p-5 font-[Inter,Segoe_UI,sans-serif] shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
       <div className="mb-2 flex items-center justify-between border-b border-[#E5E7EB] pb-4">
         <h2 className="text-lg font-semibold text-[#202A3B]">Hoạt động gần đây</h2>
-        <button type="button" className="rounded-md p-1 text-[#7A8795] transition hover:bg-[#EDF4FF] hover:text-[rgb(18,91,201)]" aria-label="Thu gọn hoạt động gần đây">
-          <RefreshCw className="h-4 w-4" />
-        </button>
+        <span className="rounded-md p-1 text-[#7A8795]"><RefreshCw className="h-4 w-4" /></span>
       </div>
+      {items.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Chưa có hoạt động quản trị nào được ghi nhận.</p>}
       <div>
-        {activities.map((activity, index) => (
-          <div key={`${activity.avatar}-${activity.time}`} className={`flex items-center gap-3 py-3.5 ${index < activities.length - 1 ? "border-b border-[#E5E7EB]" : ""}`}>
-            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${activity.color}`}>{activity.avatar}</div>
-            <div className="min-w-0">
-              <p className="truncate text-sm text-[#202A3B]">{activity.avatar === "TH" ? <><strong>Tuấn Hải</strong> đã đăng một học bổng mới</> : activity.avatar === "ND" ? <><strong>Người dùng mới</strong> đã đăng ký tài khoản</> : activity.avatar === "KYC" ? <><strong>Đối tác</strong> đã hoàn tất xác minh KYC</> : activity.text}</p>
-              <p className="mt-1 text-xs text-[#8A97A6]">{activity.time}</p>
+        {items.map((item, index) => {
+          const [resourceKey] = item.action.split(".");
+          const { resource, verb } = describe(item.action);
+          return (
+            <div key={item.id} className={`flex items-center gap-3 py-3.5 ${index < items.length - 1 ? "border-b border-[#E5E7EB]" : ""}`}>
+              <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${resourceColor[resourceKey] ?? "bg-slate-100 text-slate-600"}`}>
+                {resourceKey.slice(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm text-[#202A3B]"><strong>{item.actorEmail}</strong> đã {verb} {resource.toLowerCase()}{item.reason ? ` — "${item.reason}"` : ""}</p>
+                <p className="mt-1 text-xs text-[#8A97A6]">{timeAgo(item.createdAt)}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

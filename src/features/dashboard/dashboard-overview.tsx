@@ -1,112 +1,59 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Download, RefreshCw } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { AlertTriangle } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { PacmanLoader } from "@/components/shared/pacman-loader";
 import { StatCard } from "@/features/dashboard/stat-card";
 import { TrendChart, type DashboardTrendPoint } from "@/features/dashboard/trend-chart";
-import { RecentActivity } from "@/features/dashboard/recent-activity";
+import { RecentActivity, type ActivityItem } from "@/features/dashboard/recent-activity";
 import { authClient } from "@/lib/auth-client";
 
-type Metric = { total: number; current: number; growth: number };
+// Shape khớp đúng response thật của GET /admin/dashboard (Backend-for-admin) — không còn lớp
+// "normalizeDashboard" cũ vốn vứt bỏ phần lớn field thật (partners, saves, trends.scholarships,
+// activities...) rồi tự bịa số 0 cố định để lấp chỗ trống, gây ra hiển thị "[object Object]" khi field
+// bị đọc nhầm tên (vd. kpis.publishedScholarships không tồn tại, field thật là kpis.scholarships).
+type Metric = { total: number; current: number; previous: number; growth: number };
+type TrendPoint = { date: string; value: number };
 type DashboardData = {
-  range: { days: number };
-  attention: { pendingScholarships: number; overdueScholarships24h: number; overdueScholarships72h: number; pendingOrganizations: number; unansweredConsulting: number; overdueConsulting: number; interventionApplications: number; failedJobs: number; newReports: number };
-  kpis: { users: Metric; publishedScholarships: Metric; applications: Metric; verifiedOrganizations: Metric };
-  funnel: { views: number; saves: number; started: number };
-  trends: { users: DashboardTrendPoint[]; applications: DashboardTrendPoint[] };
-};
-
-const ranges = [7, 30, 90] as const;
-
-const dashboardFallback: DashboardData = {
-  range: { days: 30 },
-  attention: { pendingScholarships: 0, overdueScholarships24h: 0, overdueScholarships72h: 0, pendingOrganizations: 0, unansweredConsulting: 0, overdueConsulting: 0, interventionApplications: 0, failedJobs: 0, newReports: 0 },
-  kpis: {
-    users: { total: 0, current: 0, growth: 0 },
-    publishedScholarships: { total: 0, current: 0, growth: 0 },
-    applications: { total: 0, current: 0, growth: 0 },
-    verifiedOrganizations: { total: 0, current: 0, growth: 0 },
-  },
-  funnel: { views: 0, saves: 0, started: 0 },
-  trends: { users: [], applications: [] },
-};
-
-type BackendDashboard = {
-  period?: { days?: number };
-  kpis?: { users?: number; scholarships?: number; applications?: number };
-  queues?: { pending?: number };
-  trends?: Array<{ loggedAt?: string; eventType?: string }>;
-};
-
-function normalizeDashboard(data: BackendDashboard, requestedDays: number): DashboardData {
-  const events = Array.isArray(data.trends) ? data.trends : [];
-  const viewsByDate = new Map<string, number>();
-  for (const event of events) {
-    if (!event.loggedAt || event.eventType !== "view") continue;
-    const date = event.loggedAt.slice(0, 10);
-    viewsByDate.set(date, (viewsByDate.get(date) ?? 0) + 1);
-  }
-
-  const totalUsers = data.kpis?.users ?? dashboardFallback.kpis.users.total;
-  const totalScholarships = data.kpis?.scholarships ?? dashboardFallback.kpis.publishedScholarships.total;
-  const totalApplications = data.kpis?.applications ?? dashboardFallback.kpis.applications.total;
-  const pending = data.queues?.pending ?? 0;
-
-  return {
-    ...dashboardFallback,
-    range: { days: data.period?.days ?? requestedDays },
-    attention: { ...dashboardFallback.attention, pendingScholarships: pending, failedJobs: pending },
-    kpis: {
-      users: { total: totalUsers, current: totalUsers, growth: 0 },
-      publishedScholarships: { total: totalScholarships, current: totalScholarships, growth: 0 },
-      applications: { total: totalApplications, current: totalApplications, growth: 0 },
-      verifiedOrganizations: dashboardFallback.kpis.verifiedOrganizations,
-    },
-    funnel: { ...dashboardFallback.funnel, views: events.filter((event) => event.eventType === "view").length },
-    trends: {
-      users: dashboardFallback.trends.users,
-      applications: Array.from(viewsByDate, ([date, value]) => ({ date, value })),
-    },
+  period: { days: number };
+  attention: {
+    pendingScholarships: number; overdueScholarships24h: number; overdueScholarships72h: number;
+    pendingOrganizations: number; unverifiedUsers: number; failedJobs: number;
   };
-}
+  kpis: { users: Metric; scholarships: Metric; applications: Metric; partners: Metric };
+  funnel: { views: number; saves: number; applications: number };
+  trends: { users: TrendPoint[]; scholarships: TrendPoint[]; applications: TrendPoint[] };
+  activities: ActivityItem[];
+};
 
-async function getDashboard(query: string) {
-  const days = Number(new URLSearchParams(query).get("days")) || 30;
-  const response = await authClient.fetch(`/api/v1/admin/dashboard?${query}`);
+async function getDashboard(days: number): Promise<DashboardData> {
+  const response = await authClient.fetch(`/api/v1/admin/dashboard?days=${days}`);
   if (!response.ok) throw new Error("Không tải được dữ liệu dashboard.");
-  return normalizeDashboard(await response.json() as BackendDashboard, days);
+  return response.json() as Promise<DashboardData>;
 }
 
 function formatCount(value: number) {
-  return value === 0 ? "—" : value.toLocaleString("vi-VN");
+  return value.toLocaleString("vi-VN");
 }
 
-function QueueCard({ label, value, detail, href, severity = "normal", allowed = true }: { label: string; value: number; detail: string; href: string; severity?: "normal" | "warning" | "critical"; allowed?: boolean }) {
+function QueueCard({ label, value, detail, href, severity = "normal" }: { label: string; value: number; detail: string; href: string; severity?: "normal" | "warning" | "critical" }) {
   const router = useRouter();
-  if (!allowed) return null;
   const color = severity === "critical" ? "border-red-300 bg-red-50/60" : severity === "warning" ? "border-amber-300 bg-amber-50/60" : "border-[#DCEAF6] bg-white";
   return <button type="button" onClick={() => router.push(href)} className={`w-full rounded-lg border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${color}`}>
     <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-[#202A3B]">{label}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div><span className={`text-2xl font-bold ${value === 0 ? "text-slate-300" : severity === "critical" ? "text-red-600" : severity === "warning" ? "text-amber-600" : "text-[#125bc9]"}`}>{formatCount(value)}</span></div>
   </button>;
 }
 
+const ranges = [7, 30, 90] as const;
+
 export function DashboardOverview() {
-  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
-  const [selectedRange, setSelectedRange] = useState<number>(() => Number(searchParams.get("days")) || 30);
+  const [selectedRange, setSelectedRange] = useState<number>(30);
   useEffect(() => setMounted(true), []);
-  const query = useMemo(() => new URLSearchParams({ days: String(selectedRange) }).toString(), [selectedRange]);
-  const dashboard = useQuery({ queryKey: ["admin-dashboard", query], queryFn: () => getDashboard(query), refetchInterval: 60_000 });
-  const profile = useQuery({ queryKey: ["admin-profile-dashboard"], queryFn: async () => { const response = await authClient.fetch("/api/v1/admin/settings/profile"); return response.ok ? response.json() as Promise<{ role: string }> : { role: "ADMIN" }; } });
-  const role = profile.data?.role ?? "ADMIN";
-  const can = (module: "scholarships" | "partners" | "support" | "applications" | "jobs" | "reports") => role === "SUPER_ADMIN" || role === "ADMIN" || (role === "MODERATOR" && ["scholarships", "reports"].includes(module)) || (role === "SUPPORT" && module === "support");
-  const exportCsv = () => { const rows = dashboard.data ? [["Chỉ số", "Giá trị"], ["Tổng người dùng", dashboard.data.kpis.users.total], ["Tin đang hiển thị", dashboard.data.kpis.publishedScholarships.total], ["Hồ sơ nộp trong kỳ", dashboard.data.kpis.applications.current], ["Tổ chức đã xác minh", dashboard.data.kpis.verifiedOrganizations.total]] : []; const csv = rows.map((row) => row.join(",")).join("\n"); const blob = new Blob([csv], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `dashboard-${selectedRange}d.csv`; anchor.click(); URL.revokeObjectURL(url); };
+  const dashboard = useQuery({ queryKey: ["admin-dashboard", selectedRange], queryFn: () => getDashboard(selectedRange), refetchInterval: 60_000 });
 
   if (!mounted) return <div className="min-h-[420px]" />;
 
@@ -117,58 +64,51 @@ export function DashboardOverview() {
         <h1 className="mt-1 text-2xl font-semibold text-[#181818]">Dashboard</h1>
       </div>
     </div>
-    <div className="dashboard-controls flex flex-wrap items-center justify-end gap-2" style={{ display: "none" }}>
-      <div className="flex rounded-lg border border-[#DCEAF6] bg-white p-1">{ranges.map((range) => <Button key={range} size="sm" type="button" variant={selectedRange === range ? "default" : "ghost"} onClick={() => setSelectedRange(range)}>{range} ngày</Button>)}</div>
-      <Input className="h-9 w-36" type="date" aria-label="Từ ngày" />
-      <Input className="h-9 w-36" type="date" aria-label="Đến ngày" />
-      <Button variant="outline" size="sm" onClick={() => void dashboard.refetch()} disabled={dashboard.isFetching}><RefreshCw className={`h-4 w-4 ${dashboard.isFetching ? "animate-spin" : ""}`} />Làm mới</Button>
-      <Button variant="outline" size="sm" onClick={exportCsv}><Download className="h-4 w-4" />CSV</Button>
-    </div>
     {dashboard.isLoading && <PacmanLoader className="min-h-[420px]" label="Đang tải dashboard…" />}
-    {dashboard.isError && <Card className="border-red-200 bg-red-50"><CardContent className="flex items-center justify-between p-6 text-red-700"><span>Không tải được dữ liệu dashboard.</span><Button variant="outline" onClick={() => void dashboard.refetch()}>Thử lại</Button></CardContent></Card>}
+    {dashboard.isError && <Card className="border-red-200 bg-red-50"><CardContent className="flex items-center justify-between p-6 text-red-700"><span>Không tải được dữ liệu dashboard.</span><button type="button" className="underline" onClick={() => void dashboard.refetch()}>Thử lại</button></CardContent></Card>}
     {dashboard.data && <>
-      <Card className="dashboard-attention"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" />Cần bạn xử lý</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <QueueCard label="Tin chờ duyệt" value={dashboard.data.attention.pendingScholarships} detail={`${dashboard.data.attention.overdueScholarships24h} quá 24h · ${dashboard.data.attention.overdueScholarships72h} quá 72h`} href="/admin/scholarships?status=PENDING_REVIEW&sort=oldest" severity={dashboard.data.attention.overdueScholarships24h ? "critical" : "normal"} allowed={can("scholarships")} />
-        <QueueCard label="Đối tác chờ KYC" value={dashboard.data.attention.pendingOrganizations} detail="Đang chờ xác minh hồ sơ pháp lý" href="/admin/partners?status=PENDING" severity={dashboard.data.attention.pendingOrganizations ? "warning" : "normal"} allowed={can("partners")} />
-        <QueueCard label="Ticket chưa trả lời" value={dashboard.data.attention.unansweredConsulting} detail={`${dashboard.data.attention.overdueConsulting} ticket quá SLA`} href="/admin/consulting?status=OPEN" severity={dashboard.data.attention.overdueConsulting ? "critical" : "normal"} allowed={can("support")} />
-        <QueueCard label="Hồ sơ cần can thiệp" value={dashboard.data.attention.interventionApplications} detail="Cần nhân viên vận hành kiểm tra" href="/admin/applications?status=NEEDS_INTERVENTION" severity={dashboard.data.attention.interventionApplications ? "warning" : "normal"} allowed={can("applications")} />
-        <QueueCard label="Job thất bại" value={dashboard.data.attention.failedJobs} detail="Hàng đợi xử lý nền" href="/admin/system/jobs?status=failed" severity={dashboard.data.attention.failedJobs ? "critical" : "normal"} allowed={can("jobs")} />
-        <QueueCard label="Báo cáo vi phạm mới" value={dashboard.data.attention.newReports} detail="Báo cáo chưa được xử lý" href="/admin/reports?status=NEW" severity={dashboard.data.attention.newReports ? "critical" : "normal"} allowed={can("reports")} />
+      <Card className="dashboard-attention"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" />Cần bạn xử lý</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <QueueCard label="Tin chờ duyệt" value={dashboard.data.attention.pendingScholarships} detail={`${dashboard.data.attention.overdueScholarships24h} quá 24h · ${dashboard.data.attention.overdueScholarships72h} quá 72h`} href="/admin/scholarships?status=PENDING_REVIEW" severity={dashboard.data.attention.overdueScholarships24h ? "critical" : "normal"} />
+        <QueueCard label="Đối tác chờ KYC" value={dashboard.data.attention.pendingOrganizations} detail="Đang chờ xác minh hồ sơ" href="/admin/partners?status=PENDING" severity={dashboard.data.attention.pendingOrganizations ? "warning" : "normal"} />
+        <QueueCard label="Người dùng chưa xác thực email" value={dashboard.data.attention.unverifiedUsers} detail="Chưa xác nhận địa chỉ email" href="/admin/users" severity="normal" />
+        <QueueCard label="Job thất bại" value={dashboard.data.attention.failedJobs} detail="Hàng đợi xử lý nền" href="/admin/system/jobs" severity={dashboard.data.attention.failedJobs ? "critical" : "normal"} />
       </CardContent></Card>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <KpiLink href="/admin/analytics?metric=users"><StatCard title="Tổng người dùng" value={formatCount(dashboard.data.kpis.users.total)} detail={`${dashboard.data.kpis.users.current} người dùng mới trong kỳ`} growth={dashboard.data.kpis.users.growth} icon="/dashboard-icons/users.png" sparkline={dashboard.data.trends.users.map((point) => point.value)} tone="blue" progress={72} /></KpiLink>
-        <KpiLink href="/admin/analytics?metric=posts"><StatCard title="Bài viết đang hiển thị" value={formatCount(dashboard.data.kpis.publishedScholarships.total)} detail="Bài viết đã xuất bản" growth={dashboard.data.kpis.publishedScholarships.growth} icon="/dashboard-icons/news.png" tone="green" progress={58} /></KpiLink>
-        <KpiLink href="/admin/analytics?metric=applications"><StatCard title="Hồ sơ đã nộp" value={formatCount(dashboard.data.kpis.applications.current)} detail="Không tính hồ sơ bản nháp" growth={dashboard.data.kpis.applications.growth} icon="/dashboard-icons/submitted.png" sparkline={dashboard.data.trends.applications.map((point) => point.value)} tone="amber" progress={84} /></KpiLink>
-        <KpiLink href="/admin/analytics?metric=mentors"><StatCard title="Mentor đã xác minh" value={formatCount(dashboard.data.kpis.verifiedOrganizations.total)} detail="Mentor đã xác minh hồ sơ" growth={dashboard.data.kpis.verifiedOrganizations.growth} icon="/dashboard-icons/mentor.png" tone="cyan" progress={64} /></KpiLink>
-        <KpiLink href="/admin/analytics?metric=mentor-rentals"><StatCard title="Lượt thuê Mentor" value={formatCount(dashboard.data.funnel.started)} detail="Lượt bắt đầu trong kỳ" growth={0} icon="/dashboard-icons/mentor-rentals.png" tone="red" progress={46} /></KpiLink>
-        <KpiLink href="/admin/analytics?metric=views"><StatCard title="Lượt xem trang" value={formatCount(dashboard.data.funnel.views)} detail="Lượt xem trong kỳ" growth={0} icon="/dashboard-icons/views.png" tone="blue" progress={78} /></KpiLink>
+        <KpiLink href="/admin/users"><StatCard title="Tổng người dùng" value={formatCount(dashboard.data.kpis.users.total)} detail={`${dashboard.data.kpis.users.current} người dùng mới trong kỳ`} growth={dashboard.data.kpis.users.growth} icon="/dashboard-icons/users.png" sparkline={dashboard.data.trends.users.map((point) => point.value)} tone="blue" /></KpiLink>
+        <KpiLink href="/admin/scholarships"><StatCard title="Học bổng đang hiển thị" value={formatCount(dashboard.data.kpis.scholarships.total)} detail={`${dashboard.data.kpis.scholarships.current} học bổng mới trong kỳ`} growth={dashboard.data.kpis.scholarships.growth} icon="/dashboard-icons/news.png" sparkline={dashboard.data.trends.scholarships.map((point) => point.value)} tone="green" /></KpiLink>
+        <KpiLink href="/admin/applications"><StatCard title="Hồ sơ đã nộp" value={formatCount(dashboard.data.kpis.applications.current)} detail="Trong kỳ đang chọn" growth={dashboard.data.kpis.applications.growth} icon="/dashboard-icons/submitted.png" sparkline={dashboard.data.trends.applications.map((point) => point.value)} tone="amber" /></KpiLink>
+        <KpiLink href="/admin/partners"><StatCard title="Đối tác đã duyệt" value={formatCount(dashboard.data.kpis.partners.total)} detail={`${dashboard.data.kpis.partners.current} đối tác mới trong kỳ`} growth={dashboard.data.kpis.partners.growth} icon="/dashboard-icons/mentor.png" tone="cyan" /></KpiLink>
+        <KpiLink href="/admin/scholarships"><StatCard title="Học bổng đã lưu" value={formatCount(dashboard.data.funnel.saves)} detail="Lượt lưu (bookmark) trong kỳ" icon="/dashboard-icons/mentor-rentals.png" tone="red" /></KpiLink>
+        <KpiLink href="/admin/scholarships"><StatCard title="Lượt xem trang" value={formatCount(dashboard.data.funnel.views)} detail="Lượt xem học bổng trong kỳ" icon="/dashboard-icons/views.png" tone="blue" /></KpiLink>
       </div>
-      <div className="grid gap-4 xl:grid-cols-2"><TrendPanel title="Người dùng mới" data={dashboard.data.trends.users} label="Người dùng mới" range={selectedRange} onRangeChange={setSelectedRange} /><TrendPanel title="Hồ sơ nộp theo ngày" data={dashboard.data.trends.applications} label="Hồ sơ đã nộp" range={selectedRange} onRangeChange={setSelectedRange} /></div>
-      <RecentActivity />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <TrendPanel title="Người dùng mới" data={dashboard.data.trends.users} label="Người dùng mới" total={dashboard.data.kpis.users.current} growth={dashboard.data.kpis.users.growth} range={selectedRange} onRangeChange={setSelectedRange} />
+        <TrendPanel title="Hồ sơ nộp theo ngày" data={dashboard.data.trends.applications} label="Hồ sơ đã nộp" total={dashboard.data.kpis.applications.current} growth={dashboard.data.kpis.applications.growth} range={selectedRange} onRangeChange={setSelectedRange} />
+      </div>
+      <RecentActivity items={dashboard.data.activities} />
     </>}
   </div>;
 }
 
 function KpiLink({ href, children }: { href: string; children: React.ReactNode }) { const router = useRouter(); return <button type="button" className="text-left transition hover:-translate-y-0.5 hover:shadow-md" onClick={() => router.push(href)}>{children}</button>; }
-function TrendPanel({ title, data, label, range, onRangeChange }: { title: string; data: DashboardTrendPoint[]; label: string; range: number; onRangeChange: (value: number) => void }) {
-  const source = data;
+function TrendPanel({ title, data, label, total, growth, range, onRangeChange }: { title: string; data: DashboardTrendPoint[]; label: string; total: number; growth: number; range: number; onRangeChange: (value: number) => void }) {
   const points = Array.from({ length: range }, (_, index) => {
     const date = new Date();
     date.setHours(0, 0, 0, 0);
     date.setDate(date.getDate() - (range - 1 - index));
     const key = date.toISOString().slice(0, 10);
-    return source.find((point) => point.date.slice(0, 10) === key) ?? { date: key, value: 0 };
+    return data.find((point) => point.date.slice(0, 10) === key) ?? { date: key, value: 0 };
   });
-  const isUsers = label === "Người dùng mới";
+  const positive = growth >= 0;
   return <Card className="dashboard-trend-card">
     <CardHeader className="dashboard-trend-header">
       <div className="dashboard-trend-copy">
         <CardTitle>{title}</CardTitle>
         <div className="dashboard-trend-total">
-          <span>{isUsers ? "6.782" : "342"}</span>
-          <span className={isUsers ? "positive" : "negative"}>{isUsers ? "↗ 7%" : "↘ −4,2%"}</span>
+          <span>{total.toLocaleString("vi-VN")}</span>
+          <span className={positive ? "positive" : "negative"}>{positive ? "↗" : "↘"} {Math.abs(growth)}%</span>
         </div>
-        <p>{isUsers ? "Tổng số người dùng mới trong kỳ" : "Tổng số hồ sơ đã nộp trong kỳ"}</p>
+        <p>Tổng số trong kỳ đang chọn, so với kỳ liền trước</p>
       </div>
       <div className="dashboard-trend-ranges">
         {ranges.map((value) => <button key={value} type="button" onClick={() => onRangeChange(value)} className={range === value ? "active" : ""}>{value} ngày</button>)}

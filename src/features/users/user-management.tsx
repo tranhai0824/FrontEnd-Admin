@@ -13,28 +13,37 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
-type UserRole = "CANDIDATE" | "PARTNER" | "SUPER_ADMIN" | "ADMIN" | "MODERATOR" | "SUPPORT";
+// Hệ thống chỉ có 4 vai trò thật (User.roles: candidate/partner/mentor/admin — không có phân cấp
+// SUPER_ADMIN/MODERATOR/SUPPORT nào, admin_role_permissions chưa được enforce ở đâu cả, xem CLAUDE.md).
+// Trước đây map nhầm "mentor" thành "MODERATOR" (chỉ vì tên gần giống — hai vai trò hoàn toàn khác nhau)
+// và chỉ lấy roles[0], làm mất thông tin những tài khoản có nhiều vai trò cùng lúc (vd vừa candidate vừa
+// mentor). Giờ hiện đủ toàn bộ roles[] thật dưới dạng badge, không rút gọn về 1 vai trò.
+type UserRole = "candidate" | "partner" | "mentor" | "admin";
 type UserStatus = "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED" | "DISABLED";
-type ApiUser = { id: string; email: string | null; phone: string | null; role: UserRole; status: UserStatus; emailVerified: boolean; lastLoginAt: string | null; createdAt: string; updatedAt: string; profile?: { fullName: string | null } | null };
+type ApiUser = { id: string; email: string | null; phone: string | null; displayName: string | null; roles: UserRole[]; status: UserStatus; emailVerified: boolean; lastLoginAt: string | null; createdAt: string; updatedAt: string };
 type UsersResponse = { items: ApiUser[]; pagination: { page: number; pageSize: number; total: number; pageCount: number } };
-type BackendUser = { id: string; email: string | null; roles?: string[]; status: string; isEmailVerified?: boolean; lastLoginAt: string | null; createdAt: string; updatedAt: string };
+type BackendUser = {
+  id: string; email: string | null; roles: UserRole[]; status: string; isEmailVerified: boolean; lastLoginAt: string | null; createdAt: string; updatedAt: string;
+  candidateProfile?: { fullName: string | null; phone: string | null } | null;
+  partnerProfile?: { companyName: string | null } | null;
+  mentorProfile?: { fullName: string | null } | null;
+};
 type BackendUsersResponse = { items: BackendUser[]; pagination: { page: number; pageSize: number; total: number; pages: number } };
 
 const normalizeUsers = (data: BackendUsersResponse): UsersResponse => ({
   items: data.items.map((user) => {
-    const rawRole = user.roles?.[0]?.toUpperCase();
-    const role: UserRole = rawRole === "PARTNER" || rawRole === "ADMIN" ? rawRole : rawRole === "MENTOR" ? "MODERATOR" : "CANDIDATE";
-    const rawStatus = user.status.toUpperCase();
-    const status: UserStatus = !user.isEmailVerified && rawStatus === "ACTIVE" ? "PENDING_VERIFICATION" : rawStatus === "SUSPENDED" || rawStatus === "DISABLED" ? rawStatus : "ACTIVE";
-    return { ...user, phone: null, role, status, emailVerified: Boolean(user.isEmailVerified), profile: null };
+    const status: UserStatus = !user.isEmailVerified && user.status === "active" ? "PENDING_VERIFICATION" : user.status === "suspended" ? "SUSPENDED" : user.status === "disabled" ? "DISABLED" : "ACTIVE";
+    return {
+      id: user.id, email: user.email, roles: user.roles, status, emailVerified: Boolean(user.isEmailVerified),
+      lastLoginAt: user.lastLoginAt, createdAt: user.createdAt, updatedAt: user.updatedAt,
+      phone: user.candidateProfile?.phone ?? null,
+      displayName: user.candidateProfile?.fullName ?? user.partnerProfile?.companyName ?? user.mentorProfile?.fullName ?? null,
+    };
   }),
   pagination: { ...data.pagination, pageCount: data.pagination.pages },
 });
 
-const roles: Record<UserRole, string> = {
-  CANDIDATE: "Ứng viên", PARTNER: "Đối tác", SUPER_ADMIN: "Quản trị cấp cao",
-  ADMIN: "Quản trị viên", MODERATOR: "Kiểm duyệt viên", SUPPORT: "Nhân viên hỗ trợ",
-};
+const roles: Record<UserRole, string> = { candidate: "Ứng viên", partner: "Đối tác", mentor: "Mentor", admin: "Quản trị viên" };
 const statuses: Record<UserStatus, string> = {
   ACTIVE: "Đang hoạt động", PENDING_VERIFICATION: "Chưa xác minh",
   SUSPENDED: "Tạm khóa", DISABLED: "Đã vô hiệu hóa",
@@ -67,7 +76,7 @@ export function UserManagement() {
     params.set("sort", "created_desc");
     const requestedQuery = searchParams.get("query");
     if (requestedQuery) params.set("q", requestedQuery);
-    if (role !== "all") params.set("role", role === "SUPER_ADMIN" ? "admin" : role.toLowerCase());
+    if (role !== "all") params.set("role", role);
     if (status !== "all" && status !== "PENDING_VERIFICATION") params.set("status", status.toLowerCase());
     if (dateFrom) params.set("createdFrom", dateFrom);
     return params.toString();
@@ -81,15 +90,18 @@ export function UserManagement() {
       return normalizeUsers(await response.json() as BackendUsersResponse);
     },
   });
+  // GET /admin/users/stats trả thẳng {all, active, suspended, disabled, unverified} — dùng đúng 1 lệnh
+  // gọi thay vì trước đây gọi 5 lần /admin/users?pageSize=100 rồi đếm client-side (vừa tốn, vừa có bug:
+  // đếm PENDING_VERIFICATION bằng filter trên tối đa 100 dòng nên sai nếu có hơn 100 tài khoản chưa xác
+  // minh).
   const statsQuery = useQuery({
     queryKey: ["admin-user-status-counts"],
-    queryFn: async () => Object.fromEntries(await Promise.all(cards.map(async ({ value }) => {
-      const statusQuery = value === "all" || value === "PENDING_VERIFICATION" ? "" : `&status=${value.toLowerCase()}`;
-      const response = await authClient.fetch(`/api/v1/admin/users?page=1&pageSize=100${statusQuery}`);
+    queryFn: async () => {
+      const response = await authClient.fetch(`/api/v1/admin/users/stats`);
       if (!response.ok) throw new Error("Không thể tải thống kê.");
-      const data = normalizeUsers(await response.json() as BackendUsersResponse);
-      return [value, value === "PENDING_VERIFICATION" ? data.items.filter((user) => !user.emailVerified).length : data.pagination.total] as const;
-    }))) as Record<"all" | UserStatus, number>,
+      const data = await response.json() as { all: number; active: number; suspended: number; disabled: number; unverified: number };
+      return { all: data.all, ACTIVE: data.active, SUSPENDED: data.suspended, DISABLED: data.disabled, PENDING_VERIFICATION: data.unverified } as Record<"all" | UserStatus, number>;
+    },
   });
   const disableUsers = useMutation({
     mutationFn: async (ids: string[]) => {
@@ -114,7 +126,7 @@ export function UserManagement() {
   const allSelected = users.length > 0 && users.every((user) => selected.includes(user.id));
   const exportCsv = () => {
     if (!users.length) return;
-    const rows = [["Mã người dùng", "Email", "Số điện thoại", "Vai trò", "Trạng thái", "Ngày đăng ký", "Đăng nhập gần nhất"], ...users.map((user) => [user.id, user.email ?? "", user.phone ?? "", roles[user.role], statuses[user.status], dateTime(user.createdAt), user.lastLoginAt ? dateTime(user.lastLoginAt) : "Chưa đăng nhập"])];
+    const rows = [["Mã người dùng", "Email", "Số điện thoại", "Vai trò", "Trạng thái", "Ngày đăng ký", "Đăng nhập gần nhất"], ...users.map((user) => [user.id, user.email ?? "", user.phone ?? "", user.roles.map((r) => roles[r]).join(" / "), statuses[user.status], dateTime(user.createdAt), user.lastLoginAt ? dateTime(user.lastLoginAt) : "Chưa đăng nhập"])];
     const url = URL.createObjectURL(new Blob([`\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\n")}`], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = `nguoi-dung-trang-${page}.csv`; anchor.click(); URL.revokeObjectURL(url);
   };
@@ -161,14 +173,17 @@ export function UserManagement() {
 }
 
 function UserRow({ user, checked, onCheck, onPreview }: { user: ApiUser; checked: boolean; onCheck: () => void; onPreview: () => void }) {
-  return <tr className={cn("text-[13px] hover:bg-slate-50", checked && "bg-emerald-50/60")}><td className="px-4 py-3"><input type="checkbox" checked={checked} onChange={onCheck} aria-label={`Chọn ${user.email ?? user.id}`} className="h-4 w-4 accent-emerald-600" /></td><td className="px-3 py-3"><div className="flex items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-600">{initials(user.profile?.fullName ?? user.email)}</span><div className="min-w-0"><p className="max-w-[185px] truncate font-semibold">{user.profile?.fullName ?? displayName(user.email)}</p><p className="text-[11px] text-slate-400">{shortId(user.id)}</p></div></div></td><td className="px-3 py-3"><Role role={user.role} /></td><td className="px-3 py-3"><p className="flex items-center gap-1.5 text-slate-600"><span className="max-w-[180px] truncate">{user.email ?? "Chưa có email"}</span>{user.emailVerified ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <span className="text-[11px] font-medium text-orange-600">chưa xác minh</span>}</p><p className="mt-1 text-[11px] text-slate-400">{user.phone ?? "Chưa cập nhật số điện thoại"}</p></td><td className="whitespace-nowrap px-3 py-3 text-slate-600">{date(user.createdAt)}</td><td className="whitespace-nowrap px-3 py-3 text-slate-600">{user.lastLoginAt ? relative(user.lastLoginAt) : "Chưa đăng nhập"}<span className="block text-[11px] text-slate-400">{user.lastLoginAt ? time(user.lastLoginAt) : "—"}</span></td><td className="px-3 py-3"><Status status={user.status} /></td><td className="px-3 py-3 text-right"><Button variant="ghost" size="sm" className="h-8 px-2 text-[#2C6EAF]" onClick={onPreview}><Eye />Xem</Button></td></tr>;
+  return <tr className={cn("text-[13px] hover:bg-slate-50", checked && "bg-emerald-50/60")}><td className="px-4 py-3"><input type="checkbox" checked={checked} onChange={onCheck} aria-label={`Chọn ${user.email ?? user.id}`} className="h-4 w-4 accent-emerald-600" /></td><td className="px-3 py-3"><div className="flex items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-600">{initials(user.displayName ?? user.email)}</span><div className="min-w-0"><p className="max-w-[185px] truncate font-semibold">{user.displayName ?? displayName(user.email)}</p><p className="text-[11px] text-slate-400">{shortId(user.id)}</p></div></div></td><td className="px-3 py-3"><Role roles={user.roles} /></td><td className="px-3 py-3"><p className="flex items-center gap-1.5 text-slate-600"><span className="max-w-[180px] truncate">{user.email ?? "Chưa có email"}</span>{user.emailVerified ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <span className="text-[11px] font-medium text-orange-600">chưa xác minh</span>}</p><p className="mt-1 text-[11px] text-slate-400">{user.phone ?? "Chưa cập nhật số điện thoại"}</p></td><td className="whitespace-nowrap px-3 py-3 text-slate-600">{date(user.createdAt)}</td><td className="whitespace-nowrap px-3 py-3 text-slate-600">{user.lastLoginAt ? relative(user.lastLoginAt) : "Chưa đăng nhập"}<span className="block text-[11px] text-slate-400">{user.lastLoginAt ? time(user.lastLoginAt) : "—"}</span></td><td className="px-3 py-3"><Status status={user.status} /></td><td className="px-3 py-3 text-right"><Button variant="ghost" size="sm" className="h-8 px-2 text-[#2C6EAF]" onClick={onPreview}><Eye />Xem</Button></td></tr>;
 }
 
 function Preview({ user, onClose }: { user: ApiUser | null; onClose: () => void }) {
-  return <Sheet open={Boolean(user)} onOpenChange={(open) => !open && onClose()}><SheetContent className="w-full overflow-y-auto p-0 sm:max-w-[470px]">{user && <><div className="border-b px-5 py-5 pr-12"><SheetTitle className="text-lg font-bold">{displayName(user.email)}</SheetTitle><SheetDescription className="mt-1 text-xs">{shortId(user.id)} · {roles[user.role]}</SheetDescription></div><div className="space-y-6 p-5"><div className={cn("rounded-lg border p-3 text-sm", user.status === "ACTIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800")}>Tài khoản hiện ở trạng thái <strong>{statuses[user.status].toLowerCase()}</strong>.</div><section><h3 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Thông tin tài khoản</h3><div className="space-y-3"><Detail label="Email" value={user.email ?? "Chưa cập nhật"} /><Detail label="Xác minh email" value={user.emailVerified ? "Đã xác minh" : "Chưa xác minh"} /><Detail label="Điện thoại" value={user.phone ?? "Chưa cập nhật"} /><Detail label="Vai trò" value={roles[user.role]} /><Detail label="Ngày đăng ký" value={dateTime(user.createdAt)} /><Detail label="Đăng nhập gần nhất" value={user.lastLoginAt ? dateTime(user.lastLoginAt) : "Chưa đăng nhập"} /></div></section></div><div className="sticky bottom-0 border-t bg-slate-50 p-4"><Button asChild variant="outline" className="w-full"><Link href={`/admin/users/${user.id}`}><UserCog />Quản lý tài khoản</Link></Button></div></>}</SheetContent></Sheet>;
+  return <Sheet open={Boolean(user)} onOpenChange={(open) => !open && onClose()}><SheetContent className="w-full overflow-y-auto p-0 sm:max-w-[470px]">{user && <><div className="border-b px-5 py-5 pr-12"><SheetTitle className="text-lg font-bold">{user.displayName ?? displayName(user.email)}</SheetTitle><SheetDescription className="mt-1 text-xs">{shortId(user.id)} · {user.roles.map((r) => roles[r]).join(" / ")}</SheetDescription></div><div className="space-y-6 p-5"><div className={cn("rounded-lg border p-3 text-sm", user.status === "ACTIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800")}>Tài khoản hiện ở trạng thái <strong>{statuses[user.status].toLowerCase()}</strong>.</div><section><h3 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Thông tin tài khoản</h3><div className="space-y-3"><Detail label="Email" value={user.email ?? "Chưa cập nhật"} /><Detail label="Xác minh email" value={user.emailVerified ? "Đã xác minh" : "Chưa xác minh"} /><Detail label="Điện thoại" value={user.phone ?? "Chưa cập nhật"} /><Detail label="Vai trò" value={user.roles.map((r) => roles[r]).join(", ")} /><Detail label="Ngày đăng ký" value={dateTime(user.createdAt)} /><Detail label="Đăng nhập gần nhất" value={user.lastLoginAt ? dateTime(user.lastLoginAt) : "Chưa đăng nhập"} /></div></section></div><div className="sticky bottom-0 border-t bg-slate-50 p-4"><Button asChild variant="outline" className="w-full"><Link href={`/admin/users/${user.id}`}><UserCog />Quản lý tài khoản</Link></Button></div></>}</SheetContent></Sheet>;
 }
 
-function Role({ role }: { role: UserRole }) { const styles: Record<UserRole, string> = { CANDIDATE: "bg-blue-50 text-blue-700", PARTNER: "bg-amber-50 text-amber-700", SUPER_ADMIN: "bg-emerald-50 text-emerald-700", ADMIN: "bg-emerald-50 text-emerald-700", MODERATOR: "bg-violet-50 text-violet-700", SUPPORT: "bg-slate-100 text-slate-700" }; return <span className={cn("inline-flex rounded-md px-2.5 py-1 text-xs font-semibold", styles[role])}>{roles[role]}</span>; }
+function Role({ roles: userRoles }: { roles: UserRole[] }) {
+  const styles: Record<UserRole, string> = { candidate: "bg-blue-50 text-blue-700", partner: "bg-amber-50 text-amber-700", mentor: "bg-violet-50 text-violet-700", admin: "bg-emerald-50 text-emerald-700" };
+  return <span className="flex flex-wrap gap-1">{userRoles.map((r) => <span key={r} className={cn("inline-flex rounded-md px-2.5 py-1 text-xs font-semibold", styles[r])}>{roles[r]}</span>)}</span>;
+}
 function Status({ status }: { status: UserStatus }) { const styles: Record<UserStatus, string> = { ACTIVE: "text-emerald-700 before:bg-emerald-500", PENDING_VERIFICATION: "text-orange-700 before:bg-orange-500", SUSPENDED: "text-amber-700 before:bg-amber-500", DISABLED: "text-red-700 before:bg-red-500" }; return <span className={cn("inline-flex items-center gap-2 whitespace-nowrap text-xs font-semibold before:h-2 before:w-2 before:rounded-full", styles[status])}>{statuses[status]}</span>; }
 function Detail({ label, value }: { label: string; value: string }) { return <div className="grid grid-cols-[125px_1fr] gap-3 text-sm"><span className="text-slate-500">{label}</span><span className="break-words font-medium">{value}</span></div>; }
 function SkeletonRow() { return <tr className="animate-pulse"><td className="px-4 py-4"><div className="h-4 w-4 rounded bg-slate-100" /></td><td className="px-3"><div className="h-8 w-40 rounded bg-slate-100" /></td>{Array.from({ length: 6 }, (_, index) => <td className="px-3" key={index}><div className="h-5 w-24 rounded bg-slate-100" /></td>)}</tr>; }
