@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Download, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Download, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -154,6 +154,7 @@ export function ScholarshipManagement() {
   const [bulkRejectIds, setBulkRejectIds] = useState<string[]>([]);
   const [detailTab, setDetailTab] = useState<"info" | "review" | "history" | "applications" | "notes">("info");
   const [internalNote, setInternalNote] = useState("");
+  const [exporting, setExporting] = useState<"csv" | "report" | null>(null);
 
   useEffect(() => {
     if (selectedId) setDetailTab("info");
@@ -335,6 +336,90 @@ export function ScholarshipManagement() {
     setSelectedRows(new Set());
   };
 
+  const fetchExportRows = async () => {
+    const baseParams = new URLSearchParams({
+      ...(status === "PUBLISHED" ? { status: "active" } : status === "EXPIRED" ? { status: "expired" } : reviewStatusParam[status] ? { reviewStatus: reviewStatusParam[status] } : {}),
+      pageSize: "100",
+      ...(query ? { q: query } : {}),
+    });
+    const rows: ScholarshipRow[] = [];
+    let exportPage = 1;
+    let pageCount = 1;
+    do {
+      baseParams.set("page", String(exportPage));
+      const response = await authClient.fetch(`/api/v1/admin/scholarships?${baseParams.toString()}`);
+      if (!response.ok) throw new Error("Không thể tải dữ liệu để xuất.");
+      const data = await response.json() as BackendScholarshipList;
+      rows.push(...data.items.map(normalizeScholarship));
+      pageCount = data.pagination.pages;
+      exportPage += 1;
+    } while (exportPage <= pageCount);
+
+    return rows.filter((item) => {
+      if (deadlineFilter === "soon") {
+        if (!item.deadline) return false;
+        const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
+        if (item.status !== "PUBLISHED" || days < 0 || days > 10) return false;
+      }
+      return !unitFilter || item.organization.name.startsWith(unitFilter);
+    });
+  };
+
+  const exportCsv = async () => {
+    setExporting("csv");
+    try {
+      const rows = await fetchExportRows();
+      if (!rows.length) throw new Error("Không có học bổng phù hợp để xuất.");
+      const content = [
+        ["Mã học bổng", "Tên học bổng", "Đơn vị cấp", "Lĩnh vực", "Bậc học", "Khu vực", "Hạn chót", "Hồ sơ", "Lượt xem", "Trạng thái", "Ngày tạo"],
+        ...rows.map((item) => [
+          item.id, item.title, item.organization.name, item.type, item.region ?? "", item.country ?? "",
+          item.deadline ? exportDate(item.deadline) : "", String(item._count.applications), String(item.viewCount),
+          statusStyle[item.status]?.label ?? item.status, item.submittedAt ? exportDate(item.submittedAt, true) : "",
+        ]),
+      ].map((row) => row.map(csvCell).join(",")).join("\n");
+      downloadFile(`\uFEFF${content}`, `hoc-bong-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8");
+      toast.success(`Đã xuất ${rows.length} học bổng ra CSV.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể xuất CSV.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const exportReport = async () => {
+    const reportWindow = window.open("", "_blank");
+    if (!reportWindow) {
+      toast.error("Trình duyệt đang chặn cửa sổ báo cáo. Hãy cho phép pop-up và thử lại.");
+      return;
+    }
+    reportWindow.opener = null;
+    reportWindow.document.write('<p style="font-family:Arial;padding:32px">Đang tạo báo cáo…</p>');
+    setExporting("report");
+    try {
+      const rows = await fetchExportRows();
+      if (!rows.length) throw new Error("Không có học bổng phù hợp để lập báo cáo.");
+      reportWindow.document.open();
+      reportWindow.document.write(buildScholarshipReport(rows, {
+        status: statusStyle[status]?.label ?? status,
+        query,
+        unit: unitFilter,
+        generatedAt: new Date(),
+      }));
+      reportWindow.document.close();
+      reportWindow.focus();
+      window.setTimeout(() => reportWindow.print(), 250);
+      toast.success(`Đã tạo báo cáo gồm ${rows.length} học bổng.`);
+    } catch (error) {
+      reportWindow.document.open();
+      reportWindow.document.write(`<p style="font-family:Arial;padding:32px;color:#b91c1c">${escapeHtml(error instanceof Error ? error.message : "Không thể tạo báo cáo.")}</p>`);
+      reportWindow.document.close();
+      toast.error(error instanceof Error ? error.message : "Không thể tạo báo cáo.");
+    } finally {
+      setExporting(null);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-[1500px] space-y-5 text-[#2C2C2B]">
       <div className="flex flex-wrap items-start gap-4">
@@ -343,9 +428,9 @@ export function ScholarshipManagement() {
           <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.015em]">Học bổng</h1>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2.5">
-          <span className="mr-1 text-[13px] text-[#94A3B8]">Dữ liệu tính đến 20:45</span>
-          <Button variant="outline" className="h-[38px] border-[#DDE5EE] bg-white px-4 text-[13px] text-[#64748B] shadow-sm hover:bg-white hover:text-[#334155]"><Download className="h-4 w-4" />Xuất CSV</Button>
-          <Button className="h-[38px] bg-[#1CB99F] px-4 text-[13px] text-white hover:bg-[#159C87]"><Download className="h-4 w-4" />Xuất báo cáo</Button>
+          <span className="mr-1 text-[13px] text-[#94A3B8]">Dữ liệu tính đến {new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(scholarships.dataUpdatedAt || Date.now()))}</span>
+          <Button variant="outline" className="h-[38px] border-[#DDE5EE] bg-white px-4 text-[13px] text-[#64748B] shadow-sm hover:bg-white hover:text-[#334155]" onClick={() => void exportCsv()} disabled={Boolean(exporting) || scholarships.isLoading}>{exporting === "csv" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Xuất CSV</Button>
+          <Button className="h-[38px] bg-[#1CB99F] px-4 text-[13px] text-white hover:bg-[#159C87]" onClick={() => void exportReport()} disabled={Boolean(exporting) || scholarships.isLoading}>{exporting === "report" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Xuất báo cáo</Button>
         </div>
       </div>
 
@@ -631,4 +716,56 @@ function ScholarshipVersionDiff({ current, revision }: { current: ScholarshipDet
       ) : <p className="rounded-md border p-3 text-sm text-muted-foreground">Không có thay đổi trong các trường nghiệp vụ được theo dõi.</p>}
     </div>
   );
+}
+
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function downloadFile(content: string, fileName: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportDate(value: string, includeTime = false) {
+  return new Intl.DateTimeFormat("vi-VN", includeTime
+    ? { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }
+    : { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character] ?? character);
+}
+
+function buildScholarshipReport(rows: ScholarshipRow[], context: { status: string; query: string; unit: string | null; generatedAt: Date }) {
+  const published = rows.filter((item) => item.status === "PUBLISHED").length;
+  const pending = rows.filter((item) => item.status === "PENDING_REVIEW").length;
+  const expired = rows.filter((item) => item.status === "EXPIRED").length;
+  const applications = rows.reduce((total, item) => total + item._count.applications, 0);
+  const detailRows = rows.map((item) => `<tr>
+    <td><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.id.slice(0, 8).toUpperCase())}</small></td>
+    <td>${escapeHtml(item.organization.name)}</td>
+    <td>${escapeHtml(item.region ?? "—")}</td>
+    <td>${escapeHtml(item.country ?? "—")}</td>
+    <td>${item.deadline ? escapeHtml(exportDate(item.deadline)) : "—"}</td>
+    <td class="number">${item._count.applications.toLocaleString("vi-VN")}</td>
+    <td><span class="status status-${item.status.toLowerCase()}">${escapeHtml(statusStyle[item.status]?.label ?? item.status)}</span></td>
+  </tr>`).join("");
+  const filterText = [context.status, context.query ? `Từ khóa: ${context.query}` : "", context.unit ? `Đơn vị: ${context.unit}` : ""].filter(Boolean).join(" · ");
+
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Báo cáo học bổng</title><style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#243447;font-family:Arial,sans-serif;font-size:13px}.page{max-width:1180px;margin:28px auto;background:#fff;padding:34px 38px;box-shadow:0 12px 35px rgba(36,52,71,.10)}
+    header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;border-bottom:2px solid #19aa91;padding-bottom:20px}.eyebrow{margin:0 0 7px;color:#789;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:28px;letter-spacing:-.02em}.meta{text-align:right;color:#8795a7;line-height:1.6}.filters{margin:16px 0 0;color:#64748b}
+    .metrics{display:grid;grid-template-columns:repeat(5,1fr);margin:24px 0;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden}.metric{min-height:92px;padding:16px;border-right:1px solid #e2e8f0}.metric:last-child{border-right:0}.metric span{display:block;color:#718096;font-size:11px}.metric strong{display:block;margin-top:7px;font-size:24px}.metric:first-child{border-top:3px solid #19aa91;background:#eefaf7}
+    h2{margin:28px 0 12px;font-size:16px}table{width:100%;border-collapse:collapse;border:1px solid #e2e8f0}th{padding:11px 12px;background:#f8fafc;color:#64748b;font-size:10px;letter-spacing:.06em;text-align:left;text-transform:uppercase}td{padding:11px 12px;border-top:1px solid #edf2f7;vertical-align:top}td small{display:block;margin-top:4px;color:#94a3b8}.number{text-align:right;font-variant-numeric:tabular-nums}.status{display:inline-block;border-radius:999px;padding:4px 8px;background:#eef2f7;color:#52657a;font-size:11px;font-weight:700}.status-published{background:#e4f5ee;color:#0b7a57}.status-pending_review{background:#eaf4fc;color:#2783de}.status-rejected{background:#fce9e7;color:#d63939}.status-expired{background:#f0efed;color:#5f5c58}footer{margin-top:24px;border-top:1px solid #e2e8f0;padding-top:14px;color:#94a3b8;font-size:11px}
+    @media print{@page{size:A4 landscape;margin:12mm}body{background:#fff}.page{max-width:none;margin:0;padding:0;box-shadow:none}.no-print{display:none}tr{page-break-inside:avoid}}
+  </style></head><body><main class="page"><header><div><p class="eyebrow">Vận hành · TopScholar</p><h1>Báo cáo học bổng</h1><p class="filters">${escapeHtml(filterText || "Tất cả học bổng")}</p></div><div class="meta">Tạo lúc ${escapeHtml(new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeStyle: "short" }).format(context.generatedAt))}<br>${rows.length.toLocaleString("vi-VN")} bản ghi</div></header>
+    <section class="metrics"><div class="metric"><span>Tổng học bổng</span><strong>${rows.length.toLocaleString("vi-VN")}</strong></div><div class="metric"><span>Đang hiển thị</span><strong>${published.toLocaleString("vi-VN")}</strong></div><div class="metric"><span>Chờ duyệt</span><strong>${pending.toLocaleString("vi-VN")}</strong></div><div class="metric"><span>Đã hết hạn</span><strong>${expired.toLocaleString("vi-VN")}</strong></div><div class="metric"><span>Tổng hồ sơ</span><strong>${applications.toLocaleString("vi-VN")}</strong></div></section>
+    <h2>Danh sách chi tiết</h2><table><thead><tr><th>Học bổng</th><th>Đơn vị cấp</th><th>Bậc học</th><th>Khu vực</th><th>Hạn chót</th><th class="number">Hồ sơ</th><th>Trạng thái</th></tr></thead><tbody>${detailRows}</tbody></table><footer>Dữ liệu được xuất từ trang quản trị TopScholar. Báo cáo phản ánh bộ lọc tại thời điểm tạo.</footer></main></body></html>`;
 }
