@@ -36,6 +36,7 @@ type ScholarshipRow = {
 type ScholarshipList = {
   items: ScholarshipRow[];
   counts: Partial<Record<ScholarshipStatus, number>>;
+  stats: { overduePending24h: number; expiringWithin10Days: number; rejectedLast30Days: number };
   pagination: { page: number; pageSize: number; total: number; pageCount: number };
   configuration: {
     warningYellowHours: number;
@@ -56,23 +57,46 @@ type ScholarshipDetail = ScholarshipRow & {
 };
 type Reviewer = { id: string; email: string | null; profile: { fullName: string | null } | null };
 type ReviewerList = { items: Reviewer[] };
-type BackendScholarship = { id: string; title: string; description: string; degree: string; valueType?: string; value_type?: string; locationProvinceCities?: string[]; deadline: string; isActive?: boolean; isFeatured?: boolean; reviewStatus?: "pending" | "approved" | "rejected" | "changes_requested"; reviewReason?: string | null; reviewerId?: string | null; createdAt?: string; partnerProfile?: { id: string; companyName: string } | null; _count?: { applications: number; analyticsLogs?: number } };
-type BackendScholarshipList = { items: BackendScholarship[]; counts?: Record<string, number>; pagination: { page: number; pageSize: number; total: number; pages: number } };
+type BackendScholarship = { id: string; title: string; description: string; degree: string; valueType?: string; value_type?: string; locationProvinceCities?: string[]; deadline: string; isActive?: boolean; isHidden?: boolean; isFeatured?: boolean; reviewStatus?: "pending" | "approved" | "rejected" | "changes_requested"; reviewReason?: string | null; reviewerId?: string | null; createdAt?: string; partnerProfile?: { id: string; companyName: string; approvalStatus?: string } | null; majors?: Array<{ major: { id: number; name: string; group?: { id: number; name: string } } }>; _count?: { applications: number; analyticsLogs?: number } };
+type BackendScholarshipList = { items: BackendScholarship[]; counts?: Record<string, number>; stats?: { overduePending24h: number; expiringWithin10Days: number; rejectedLast30Days: number }; pagination: { page: number; pageSize: number; total: number; pages: number } };
+type ScholarshipFilterOptions = {
+  organizations: Array<{ id: string; companyName: string }>;
+  majorGroups: Array<{ id: number; name: string }>;
+  degrees: string[];
+  locations: string[];
+};
 
-// reviewStatus là nguồn sự thật duy nhất cho trạng thái kiểm duyệt (backend Backend-for-admin đã trả
-// đúng field này từ 2026-08-19) — KHÔNG được suy đoán lại từ is_active như bản cũ, vì is_active=false
-// vừa đúng cho học bổng "pending" (chưa từng duyệt) lẫn "đối tác tự đóng đơn", hai trạng thái khác hẳn
-// nhau. deadline quá hạn luôn override thành EXPIRED bất kể reviewStatus, vì hết hạn là sự thật khách
-// quan không phụ thuộc kiểm duyệt.
+const degreeLabels: Record<string, string> = {
+  undergraduate: "Cử nhân",
+  bachelor: "Cử nhân",
+  postgraduate: "Sau đại học",
+  master: "Thạc sĩ",
+  masters: "Thạc sĩ",
+  doctorate: "Tiến sĩ",
+  phd: "Tiến sĩ",
+  vocational: "Cao đẳng / nghề",
+  short_course: "Khóa ngắn hạn",
+  other: "Khác",
+};
+
+function displayDegree(value: string) {
+  return degreeLabels[value.trim().toLowerCase()] ?? value.replaceAll("_", " ");
+}
+
+// reviewStatus quyết định trạng thái kiểm duyệt. Chỉ học bổng đã duyệt mới chuyển sang EXPIRED/CLOSED
+// theo hạn chót và isActive; tránh biến một tin đang chờ hoặc bị từ chối thành sai nhóm nghiệp vụ.
 function normalizeScholarship(item: BackendScholarship): ScholarshipRow {
   let status: ScholarshipStatus;
-  if (new Date(item.deadline).getTime() < Date.now()) status = "EXPIRED";
+  if (item.isHidden) status = "REMOVED";
   else if (item.reviewStatus === "pending") status = "PENDING_REVIEW";
   else if (item.reviewStatus === "rejected") status = "REJECTED";
   else if (item.reviewStatus === "changes_requested") status = "CHANGES_REQUESTED";
-  else status = item.isActive ? "PUBLISHED" : "REJECTED";
+  else if (item.reviewStatus === "approved" && new Date(item.deadline).getTime() < Date.now()) status = "EXPIRED";
+  else if (item.reviewStatus === "approved") status = item.isActive ? "PUBLISHED" : "CLOSED";
+  else status = "DRAFT";
   const locations = item.locationProvinceCities ?? [];
-  return { id: item.id, title: item.title, type: item.valueType ?? item.value_type ?? "Học bổng", country: locations.length ? locations.join(", ") : "Toàn quốc", region: item.degree, deadline: item.deadline, status, reviewReason: item.reviewReason ?? null, viewCount: item._count?.analyticsLogs ?? 0, submittedAt: item.createdAt ?? null, reviewerId: item.reviewerId ?? null, isFeatured: Boolean(item.isFeatured), organization: { id: item.partnerProfile?.id ?? "system", name: item.partnerProfile?.companyName ?? "Hệ thống", status: "VERIFIED", verified: true }, _count: item._count ?? { applications: 0 } };
+  const fields = Array.from(new Set((item.majors ?? []).map((entry) => entry.major.group?.name ?? entry.major.name)));
+  return { id: item.id, title: item.title, type: fields.length ? fields.join(", ") : "Chưa phân loại", country: locations.length ? locations.join(", ") : "Toàn quốc", region: displayDegree(item.degree), deadline: item.deadline, status, reviewReason: item.reviewReason ?? null, viewCount: item._count?.analyticsLogs ?? 0, submittedAt: item.createdAt ?? null, reviewerId: item.reviewerId ?? null, isFeatured: Boolean(item.isFeatured), organization: { id: item.partnerProfile?.id ?? "system", name: item.partnerProfile?.companyName ?? "Hệ thống", status: item.partnerProfile?.approvalStatus ?? "system", verified: !item.partnerProfile || item.partnerProfile.approvalStatus === "approved" }, _count: { applications: item._count?.applications ?? 0 } };
 }
 function normalizeScholarshipList(data: BackendScholarshipList): ScholarshipList {
   const items = data.items.map(normalizeScholarship);
@@ -84,7 +108,7 @@ function normalizeScholarshipList(data: BackendScholarshipList): ScholarshipList
     REJECTED: data.counts.REJECTED ?? 0, CHANGES_REQUESTED: data.counts.CHANGES_REQUESTED ?? 0,
     EXPIRED: data.counts.EXPIRED ?? 0,
   } : items.reduce<Partial<Record<ScholarshipStatus, number>>>((result, item) => { result[item.status] = (result[item.status] ?? 0) + 1; return result; }, {});
-  return { items, counts, pagination: { ...data.pagination, pageCount: data.pagination.pages }, configuration: { warningYellowHours: 24, warningRedHours: 72, reviewChecklist: [] } };
+  return { items, counts, stats: data.stats ?? { overduePending24h: 0, expiringWithin10Days: 0, rejectedLast30Days: 0 }, pagination: { ...data.pagination, pageCount: data.pagination.pages }, configuration: { warningYellowHours: 24, warningRedHours: 72, reviewChecklist: [] } };
 }
 
 const tabs: Array<{ value: ScholarshipStatus; label: string }> = [
@@ -97,20 +121,6 @@ const tabs: Array<{ value: ScholarshipStatus; label: string }> = [
 ];
 
 
-const scholarshipUnitOptions = [
-  "Đơn vị",
-  "Vingroup / VinIF",
-  "Samsung Việt Nam",
-  "Viettel",
-  "FPT",
-  "ANZ",
-  "British Council",
-  "Đại sứ quán Nhật Bản",
-  "European Commission",
-  "Campus France",
-  "GIZ",
-];
-
 const statusStyle: Record<string, { label: string; badge: string; dot: string }> = {
   PENDING_REVIEW: { label: "Chờ duyệt", badge: "bg-[#EAF4FC] text-[#2783DE]", dot: "bg-[#2783DE]" },
   PUBLISHED: { label: "Đang hiển thị", badge: "bg-[#E4F5EE] text-[#0B7A57]", dot: "bg-[#0F9D6E]" },
@@ -119,6 +129,7 @@ const statusStyle: Record<string, { label: string; badge: string; dot: string }>
   CHANGES_REQUESTED: { label: "Cần chỉnh sửa", badge: "bg-[#EAF1FC] text-[#2A5ADB]", dot: "bg-[#2A5ADB]" },
   DRAFT: { label: "Nháp", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
   REMOVED: { label: "Đã gỡ", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
+  CLOSED: { label: "Đã đóng", badge: "bg-slate-100 text-slate-600", dot: "bg-slate-400" },
 };
 // status ("active"/"inactive"/"expired", dùng cho tab PUBLISHED/EXPIRED) chỉ diễn đạt is_active+deadline.
 // Các tab còn lại (PENDING_REVIEW/REJECTED/CHANGES_REQUESTED) phải lọc bằng reviewStatus thật, không thể
@@ -141,7 +152,13 @@ export function ScholarshipManagement() {
   const queryClient = useQueryClient();
   const status = (params.get("status") as ScholarshipStatus) || "PUBLISHED";
   const page = Math.max(1, Number(params.get("page")) || 1);
+  const pageSize = [20, 50, 100].includes(Number(params.get("pageSize"))) ? Number(params.get("pageSize")) : 20;
   const query = params.get("query") ?? "";
+  const majorGroupFilter = params.get("majorGroupId");
+  const degreeFilter = params.get("degree");
+  const locationFilter = params.get("location");
+  const organizationFilter = params.get("organizationId");
+  const deadlineFilter = params.get("deadline");
   const [search, setSearch] = useState(query);
   const [selectedId, setSelectedId] = useState<string | null>(params.get("selected"));
   const [reason, setReason] = useState("");
@@ -155,15 +172,31 @@ export function ScholarshipManagement() {
   const [detailTab, setDetailTab] = useState<"info" | "review" | "history" | "applications" | "notes">("info");
   const [internalNote, setInternalNote] = useState("");
   const [exporting, setExporting] = useState<"csv" | "report" | null>(null);
+  const [bulkDeadlineOpen, setBulkDeadlineOpen] = useState(false);
+  const [bulkDeadline, setBulkDeadline] = useState("");
+  const [bulkReviewerOpen, setBulkReviewerOpen] = useState(false);
+  const [bulkReviewerId, setBulkReviewerId] = useState("unassigned");
 
   useEffect(() => {
     if (selectedId) setDetailTab("info");
   }, [selectedId]);
 
-  const queryString = useMemo(() => new URLSearchParams({
-    ...(status === "PUBLISHED" ? { status: "active" } : status === "EXPIRED" ? { status: "expired" } : reviewStatusParam[status] ? { reviewStatus: reviewStatusParam[status] } : {}),
-    page: String(page), pageSize: "20", ...(query ? { q: query } : {}),
-  }).toString(), [page, query, status]);
+  const queryString = useMemo(() => {
+    const values: Record<string, string> = {
+      ...(status === "PUBLISHED" ? { status: "active" } : status === "EXPIRED" ? { status: "expired" } : reviewStatusParam[status] ? { reviewStatus: reviewStatusParam[status] } : {}),
+      page: String(page), pageSize: String(pageSize), ...(query ? { q: query } : {}),
+      ...(majorGroupFilter ? { majorGroupId: majorGroupFilter } : {}),
+      ...(degreeFilter ? { degree: degreeFilter } : {}),
+      ...(locationFilter ? { location: locationFilter } : {}),
+      ...(organizationFilter ? { organizationId: organizationFilter } : {}),
+    };
+    if (deadlineFilter && deadlineFilter !== "overdue") {
+      const now = new Date();
+      values.deadlineFrom = now.toISOString();
+      values.deadlineTo = new Date(now.getTime() + Number(deadlineFilter) * 86_400_000).toISOString();
+    }
+    return new URLSearchParams(values).toString();
+  }, [deadlineFilter, degreeFilter, locationFilter, majorGroupFilter, organizationFilter, page, pageSize, query, status]);
   const scholarships = useQuery({
     queryKey: ["admin-scholarships", queryString],
     queryFn: async () => {
@@ -172,6 +205,15 @@ export function ScholarshipManagement() {
       return normalizeScholarshipList(await response.json() as BackendScholarshipList);
     },
     placeholderData: keepPreviousData,
+  });
+  const filterOptions = useQuery({
+    queryKey: ["admin-scholarship-filter-options"],
+    queryFn: async () => {
+      const response = await authClient.fetch("/api/v1/admin/scholarships/filter-options");
+      if (!response.ok) throw new Error("Không thể tải các lựa chọn bộ lọc.");
+      return response.json() as Promise<ScholarshipFilterOptions>;
+    },
+    staleTime: 5 * 60_000,
   });
   const checklistItems = scholarships.data?.configuration.reviewChecklist
     .map((item) => item.label)
@@ -297,29 +339,16 @@ export function ScholarshipManagement() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const deadlineFilter = params.get("deadline");
-  const unitFilter = params.get("unit");
-  const unitOptions = scholarshipUnitOptions;
-  const filteredRows = (scholarships.data?.items ?? []).filter((item) => {
-    if (deadlineFilter !== "soon") return true;
-    if (!item.deadline) return false;
-    const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
-    return item.status === "PUBLISHED" && days >= 0 && days <= 10;
-  });
-  const visibleRows = filteredRows.filter((item) => !unitFilter || item.organization.name.startsWith(unitFilter));
+  const visibleRows = scholarships.data?.items ?? [];
   const reviewerEmailById = new Map((reviewers.data ?? []).map((reviewer) => [reviewer.id, reviewer.email ?? reviewer.id]));
   const counts = scholarships.data?.counts ?? {};
-  const soonCount = (scholarships.data?.items ?? []).filter((item) => {
-    if (!item.deadline) return false;
-    const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
-    return item.status === "PUBLISHED" && days >= 0 && days <= 10;
-  }).length;
+  const stats = scholarships.data?.stats ?? { overduePending24h: 0, expiringWithin10Days: 0, rejectedLast30Days: 0 };
   const statusCards = [
-    { label: "Chờ duyệt", value: "PENDING_REVIEW" as ScholarshipStatus, count: counts.PENDING_REVIEW ?? 0, detail: "2 tin quá 24 giờ", dot: "bg-[#2783DE]", alert: true },
+    { label: "Chờ duyệt", value: "PENDING_REVIEW" as ScholarshipStatus, count: counts.PENDING_REVIEW ?? 0, detail: `${stats.overduePending24h} tin quá 24 giờ`, dot: "bg-[#2783DE]", alert: stats.overduePending24h > 0 },
     { label: "Đang hiển thị", value: "PUBLISHED" as ScholarshipStatus, count: counts.PUBLISHED ?? 0, detail: "trên trang người dùng", dot: "bg-[#0F9D6E]" },
-    { label: "Sắp hết hạn", value: "PUBLISHED" as ScholarshipStatus, count: soonCount, detail: "còn dưới 10 ngày", dot: "bg-[#2783DE]", deadline: "soon" },
+    { label: "Sắp hết hạn", value: "PUBLISHED" as ScholarshipStatus, count: stats.expiringWithin10Days, detail: "còn dưới 10 ngày", dot: "bg-[#2783DE]", deadline: "10" },
     { label: "Đã hết hạn", value: "EXPIRED" as ScholarshipStatus, count: counts.EXPIRED ?? 0, detail: "cần lưu trữ hoặc gia hạn", dot: "bg-[#7D7A75]" },
-    { label: "Từ chối", value: "REJECTED" as ScholarshipStatus, count: counts.REJECTED ?? 0, detail: "trong 30 ngày", dot: "bg-[#D63939]" },
+    { label: "Từ chối", value: "REJECTED" as ScholarshipStatus, count: stats.rejectedLast30Days, detail: "trong 30 ngày", dot: "bg-[#D63939]" },
     { label: "Cần chỉnh sửa", value: "CHANGES_REQUESTED" as ScholarshipStatus, count: counts.CHANGES_REQUESTED ?? 0, detail: "đang chờ đối tác cập nhật", dot: "bg-[#2A5ADB]" },
   ];
   const allRowsSelected = visibleRows.length > 0 && visibleRows.every((item) => selectedRows.has(item.id));
@@ -329,19 +358,41 @@ export function ScholarshipManagement() {
     return next;
   });
   const toggleAllRows = () => setSelectedRows(allRowsSelected ? new Set() : new Set(visibleRows.map((item) => item.id)));
-  const runBulkDecision = async (action: "APPROVE" | "REMOVE") => {
-    const ids = Array.from(selectedRows).filter((id) => !id.startsWith("mock-"));
-    if (ids.length) await Promise.all(ids.map((id) => decision.mutateAsync({ id, action })));
-    toast.success(action === "APPROVE" ? "Đã duyệt các học bổng đã chọn." : "Đã cập nhật các học bổng đã chọn.");
-    setSelectedRows(new Set());
-  };
+  useEffect(() => setSelectedRows(new Set()), [queryString]);
+
+  const bulkDecision = useMutation({
+    mutationFn: async ({ ids, action, note }: { ids: string[]; action: "approve" | "reject"; note?: string }) => {
+      const response = await authClient.fetch("/api/v1/admin/scholarships/bulk-decision", { method: "POST", body: JSON.stringify({ ids, action, reason: note || undefined }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => null) as { message?: string } | null)?.message ?? "Không thể cập nhật các học bổng đã chọn.");
+      return response.json() as Promise<{ affected: number }>;
+    },
+    onSuccess: async ({ affected }, variables) => {
+      toast.success(variables.action === "approve" ? `Đã duyệt ${affected} học bổng.` : `Đã từ chối ${affected} học bổng.`);
+      setSelectedRows(new Set());
+      setBulkRejectIds([]);
+      await queryClient.invalidateQueries({ queryKey: ["admin-scholarships"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const bulkUpdate = useMutation({
+    mutationFn: async (payload: { ids: string[]; deadline?: string; reviewerId?: string | null; isHidden?: boolean; reason: string }) => {
+      const response = await authClient.fetch("/api/v1/admin/scholarships/bulk-update", { method: "PATCH", body: JSON.stringify(payload) });
+      if (!response.ok) throw new Error((await response.json().catch(() => null) as { message?: string } | null)?.message ?? "Không thể cập nhật các học bổng đã chọn.");
+      return response.json() as Promise<{ affected: number }>;
+    },
+    onSuccess: async ({ affected }) => {
+      toast.success(`Đã cập nhật ${affected} học bổng.`);
+      setSelectedRows(new Set());
+      setBulkDeadlineOpen(false);
+      setBulkReviewerOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["admin-scholarships"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const fetchExportRows = async () => {
-    const baseParams = new URLSearchParams({
-      ...(status === "PUBLISHED" ? { status: "active" } : status === "EXPIRED" ? { status: "expired" } : reviewStatusParam[status] ? { reviewStatus: reviewStatusParam[status] } : {}),
-      pageSize: "100",
-      ...(query ? { q: query } : {}),
-    });
+    const baseParams = new URLSearchParams(queryString);
+    baseParams.set("pageSize", "100");
     const rows: ScholarshipRow[] = [];
     let exportPage = 1;
     let pageCount = 1;
@@ -355,14 +406,7 @@ export function ScholarshipManagement() {
       exportPage += 1;
     } while (exportPage <= pageCount);
 
-    return rows.filter((item) => {
-      if (deadlineFilter === "soon") {
-        if (!item.deadline) return false;
-        const days = Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000);
-        if (item.status !== "PUBLISHED" || days < 0 || days > 10) return false;
-      }
-      return !unitFilter || item.organization.name.startsWith(unitFilter);
-    });
+    return rows;
   };
 
   const exportCsv = async () => {
@@ -403,7 +447,7 @@ export function ScholarshipManagement() {
       reportWindow.document.write(buildScholarshipReport(rows, {
         status: statusStyle[status]?.label ?? status,
         query,
-        unit: unitFilter,
+        unit: filterOptions.data?.organizations.find((item) => item.id === organizationFilter)?.companyName ?? null,
         generatedAt: new Date(),
       }));
       reportWindow.document.close();
@@ -448,31 +492,34 @@ export function ScholarshipManagement() {
       <div className="space-y-3">
         <form className="flex flex-wrap items-center gap-1.5" onSubmit={(event) => { event.preventDefault(); setParams({ query: search.trim() || undefined, page: "1" }); }}>
           <div className="relative min-w-[220px] flex-1 xl:max-w-[300px]"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#7D7A75]" /><Input className="h-8 border-[#E6E5E3] bg-white pl-8 text-[12px]" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo tên tin, mã, đơn vị cấp…" /></div>
-          <Select defaultValue="Tất cả lĩnh vực"><SelectTrigger className="h-8 w-auto min-w-[155px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue /></SelectTrigger><SelectContent>{["Tất cả lĩnh vực", "Công nghệ thông tin", "Kỹ thuật", "Kinh tế & Kinh doanh", "Khoa học tự nhiên", "Y tế & Sức khỏe", "Khoa học xã hội & Nhân văn", "Giáo dục", "Luật", "Nghệ thuật & Thiết kế", "Nông nghiệp & Môi trường", "Du lịch & Dịch vụ", "Đa ngành", "Khác"].map((field) => <SelectItem key={field} value={field}>{field}</SelectItem>)}</SelectContent></Select>
-          <Select defaultValue="Tất cả bậc học"><SelectTrigger className="h-8 w-auto min-w-[125px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue /></SelectTrigger><SelectContent>{["Tất cả bậc học", "Cao đẳng", "Cử nhân", "Ngắn hạn", "Thạc sĩ", "Tiến sĩ"].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}</SelectContent></Select>
-          <Select defaultValue="Quốc gia"><SelectTrigger className="h-8 w-auto min-w-[120px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue /></SelectTrigger><SelectContent>{["Quốc gia", "Anh", "Đa quốc gia", "Đài Loan", "Đức", "Hàn Quốc", "Nhật", "Pháp", "Singapore", "Thái Lan", "Úc", "Việt Nam", "Ý"].map((country) => <SelectItem key={country} value={country}>{country}</SelectItem>)}</SelectContent></Select>
-          <Select value={unitFilter ?? "Đơn vị"} onValueChange={(value) => setParams({ unit: value === "Đơn vị" ? undefined : value, page: "1" })}><SelectTrigger className="h-8 w-auto min-w-[145px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue /></SelectTrigger><SelectContent>{unitOptions.map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}</SelectContent></Select>
-          {status !== "EXPIRED" && <Select defaultValue="Hạn chót"><SelectTrigger className="h-8 w-auto min-w-[120px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue /></SelectTrigger><SelectContent>{["Hạn chót", "Còn dưới 7 ngày", "Còn dưới 20 ngày", "Còn dưới 30 ngày", "Đã quá hạn"].map((deadline) => <SelectItem key={deadline} value={deadline}>{deadline}</SelectItem>)}</SelectContent></Select>}
-          <Button variant="outline" type="button" className="ml-auto h-8 bg-white px-3 text-[12px] text-[#7D7A75] hover:bg-white hover:text-[#000000]" onClick={() => scholarships.refetch()}><RefreshCw className="h-3.5 w-3.5" />Làm mới</Button>
+          <Select value={majorGroupFilter ?? "all"} onValueChange={(value) => setParams({ majorGroupId: value === "all" ? undefined : value, page: "1" })}><SelectTrigger className="h-8 w-auto min-w-[155px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue placeholder="Tất cả lĩnh vực" /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả lĩnh vực</SelectItem>{(filterOptions.data?.majorGroups ?? []).map((field) => <SelectItem key={field.id} value={String(field.id)}>{field.name}</SelectItem>)}</SelectContent></Select>
+          <Select value={degreeFilter ?? "all"} onValueChange={(value) => setParams({ degree: value === "all" ? undefined : value, page: "1" })}><SelectTrigger className="h-8 w-auto min-w-[125px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue placeholder="Tất cả bậc học" /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả bậc học</SelectItem>{(filterOptions.data?.degrees ?? []).map((level) => <SelectItem key={level} value={level}>{displayDegree(level)}</SelectItem>)}</SelectContent></Select>
+          <Select value={locationFilter ?? "all"} onValueChange={(value) => setParams({ location: value === "all" ? undefined : value, page: "1" })}><SelectTrigger className="h-8 w-auto min-w-[120px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue placeholder="Khu vực" /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả khu vực</SelectItem>{(filterOptions.data?.locations ?? []).map((location) => <SelectItem key={location} value={location}>{location}</SelectItem>)}</SelectContent></Select>
+          <Select value={organizationFilter ?? "all"} onValueChange={(value) => setParams({ organizationId: value === "all" ? undefined : value, page: "1" })}><SelectTrigger className="h-8 w-auto min-w-[145px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue placeholder="Đơn vị" /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả đơn vị</SelectItem>{(filterOptions.data?.organizations ?? []).map((unit) => <SelectItem key={unit.id} value={unit.id}>{unit.companyName}</SelectItem>)}</SelectContent></Select>
+          {status !== "EXPIRED" && <Select value={deadlineFilter ?? "all"} onValueChange={(value) => value === "overdue" ? setParams({ status: "EXPIRED", deadline: undefined, page: "1" }) : setParams({ deadline: value === "all" ? undefined : value, page: "1" })}><SelectTrigger className="h-8 w-auto min-w-[120px] border-[#E6E5E3] bg-white text-[12px]"><SelectValue placeholder="Hạn chót" /></SelectTrigger><SelectContent><SelectItem value="all">Tất cả hạn chót</SelectItem><SelectItem value="7">Còn dưới 7 ngày</SelectItem><SelectItem value="20">Còn dưới 20 ngày</SelectItem><SelectItem value="30">Còn dưới 30 ngày</SelectItem><SelectItem value="overdue">Đã quá hạn</SelectItem></SelectContent></Select>}
+          <Button variant="outline" type="button" className="ml-auto h-8 bg-white px-3 text-[12px] text-[#7D7A75] hover:bg-white hover:text-[#000000]" onClick={() => void Promise.all([scholarships.refetch(), filterOptions.refetch()])} disabled={scholarships.isFetching}><RefreshCw className={cn("h-3.5 w-3.5", scholarships.isFetching && "animate-spin")} />Làm mới</Button>
         </form>
       </div>
 
       {selectedRows.size > 0 && <div className="flex min-h-[48px] items-center gap-2 rounded-md border border-[#E2E8F0] bg-[#F8FCFC] px-3 py-2">
         <span className="mr-1 whitespace-nowrap text-[13px] font-semibold text-[#087F68]">{selectedRows.size} tin đã chọn</span>
-        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => void runBulkDecision("APPROVE")} disabled={decision.isPending}>Duyệt</Button>
-        <Button type="button" variant="outline" className="h-8 rounded-md border-[#F1C7C4] bg-white px-3 text-[12px] text-[#D63939] shadow-none hover:bg-[#FFF4F3] hover:text-[#B52F2F]" onClick={() => { setBulkRejectIds(Array.from(selectedRows)); setSelectedId(null); setRejectReason(rejectionReasons[0]); setRejectNote(""); setRejectOpen(true); }} disabled={decision.isPending}>Từ chối</Button>
-        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => toast.success("Chức năng gia hạn hạn chót đang được chuẩn bị.")}>Gia hạn hạn chót</Button>
-        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => toast.success("Chức năng gán người phụ trách đang được chuẩn bị.")}>Gán người phụ trách</Button>
-        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => toast.success("Đã ẩn các học bổng đã chọn.")}>Ẩn</Button>
-        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => void runBulkDecision("REMOVE")} disabled={decision.isPending}>Xóa</Button>
+        {status === "PENDING_REVIEW" && <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => bulkDecision.mutate({ ids: Array.from(selectedRows), action: "approve" })} disabled={bulkDecision.isPending}>Duyệt</Button>}
+        {status === "PENDING_REVIEW" && <Button type="button" variant="outline" className="h-8 rounded-md border-[#F1C7C4] bg-white px-3 text-[12px] text-[#D63939] shadow-none hover:bg-[#FFF4F3] hover:text-[#B52F2F]" onClick={() => { setBulkRejectIds(Array.from(selectedRows)); setSelectedId(null); setRejectReason(rejectionReasons[0]); setRejectNote(""); setRejectOpen(true); }} disabled={bulkDecision.isPending}>Từ chối</Button>}
+        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => { setBulkDeadline(""); setBulkDeadlineOpen(true); }}>Gia hạn hạn chót</Button>
+        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => { setBulkReviewerId("unassigned"); setBulkReviewerOpen(true); }}>Gán người phụ trách</Button>
+        <Button type="button" variant="outline" className="h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => bulkUpdate.mutate({ ids: Array.from(selectedRows), isHidden: true, reason: "Ẩn hàng loạt từ trang quản trị" })} disabled={bulkUpdate.isPending}>Ẩn khỏi trang công khai</Button>
         <Button type="button" variant="outline" className="ml-auto h-8 rounded-md border-[#DDE5EE] bg-white px-3 text-[12px] text-[#52657A] shadow-none hover:bg-[#F3F6F9] hover:text-[#334155]" onClick={() => setSelectedRows(new Set())}>Bỏ chọn</Button>
       </div>}
 
       <Card className="overflow-hidden rounded-[10px] border-[#E6E5E3] shadow-none">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1120px] border-collapse">
-            <thead><tr className="border-b border-[#E6E5E3] bg-[#F9F8F7]">{["", "Chọn tất cả học bổng", "Lĩnh vực", "Bậc học", "Quốc gia", "Hạn chót", "Hồ sơ", "Lượt xem", "Trạng thái", "Phụ trách", "Cập nhật", ""].map((heading, index) => <th key={`${heading}-${index}`} className="whitespace-nowrap px-3.5 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7D7A75]">{index === 0 ? <input type="checkbox" aria-label="Chọn tất cả học bổng" checked={allRowsSelected} onChange={toggleAllRows} className="h-[15px] w-[15px] accent-[#0F9D6E]" /> : heading}</th>)}</tr></thead>
-            <tbody>{visibleRows.map((item) => {
+            <thead><tr className="border-b border-[#E6E5E3] bg-[#F9F8F7]">{["", "Chọn tất cả học bổng", "Lĩnh vực", "Bậc học", "Khu vực", "Hạn chót", "Hồ sơ", "Lượt xem", "Trạng thái", "Phụ trách", "Ngày đăng", ""].map((heading, index) => <th key={`${heading}-${index}`} className="whitespace-nowrap px-3.5 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7D7A75]">{index === 0 ? <input type="checkbox" aria-label="Chọn tất cả học bổng" checked={allRowsSelected} onChange={toggleAllRows} disabled={!visibleRows.length} className="h-[15px] w-[15px] accent-[#0F9D6E]" /> : heading}</th>)}</tr></thead>
+            <tbody>
+            {scholarships.isLoading && <tr><td colSpan={12} className="h-40 text-center text-sm text-[#7D7A75]"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />Đang tải danh sách học bổng…</td></tr>}
+            {scholarships.isError && <tr><td colSpan={12} className="h-40 text-center text-sm text-[#B52F2F]"><AlertTriangle className="mx-auto mb-2 h-5 w-5" />Không thể tải danh sách học bổng.<Button type="button" variant="link" className="ml-1 px-1" onClick={() => scholarships.refetch()}>Thử lại</Button></td></tr>}
+            {!scholarships.isLoading && !scholarships.isError && visibleRows.length === 0 && <tr><td colSpan={12} className="h-40 text-center text-sm text-[#7D7A75]">Không có học bổng phù hợp với bộ lọc hiện tại.</td></tr>}
+            {visibleRows.map((item) => {
               const hours = item.submittedAt ? Math.max(0, (Date.now() - new Date(item.submittedAt).getTime()) / 3_600_000) : 0;
               const days = item.deadline ? Math.ceil((new Date(item.deadline).getTime() - Date.now()) / 86_400_000) : null;
               const style = statusStyle[item.status] ?? statusStyle.DRAFT;
@@ -487,8 +534,8 @@ export function ScholarshipManagement() {
                 <td className="px-3.5 py-3 text-right text-[13px] tabular-nums">{item._count.applications}</td>
                 <td className="px-3.5 py-3 text-right text-[13px] tabular-nums">{item.viewCount.toLocaleString("vi-VN")}</td>
                 <td className="px-3.5 py-3"><span className={cn("inline-flex items-center gap-2 whitespace-nowrap text-[13px] font-medium", isSoon ? "text-[#D5803B]" : item.status === "PUBLISHED" ? "text-[#0F9D6E]" : item.status === "REJECTED" ? "text-[#D63939]" : item.status === "EXPIRED" ? "text-[#7D7A75]" : "text-[#A4602A]")}><i className={cn("h-2.5 w-2.5 rounded-full", isSoon ? "bg-[#F59E0B]" : item.status === "PUBLISHED" ? "bg-[#2FB344]" : item.status === "REJECTED" ? "bg-[#D63939]" : item.status === "EXPIRED" ? "bg-[#7D7A75]" : "bg-[#F59E0B]")} />{isSoon ? "Sắp hết hạn" : style.label}</span></td>
-                <td className="whitespace-nowrap px-3.5 py-3 text-[13px]">{item.reviewerId ? <span className="flex items-center gap-2"><i className="grid h-6 w-6 place-items-center rounded-full bg-[#F0EFED] text-[10px] font-bold">{(reviewerEmailById.get(item.reviewerId) ?? "??").slice(0, 2).toUpperCase()}</i>{reviewerEmailById.get(item.reviewerId) ?? item.reviewerId}</span> : <span className="text-[#7D7A75]">Chưa gán</span>}</td>
-                <td className="whitespace-nowrap px-3.5 py-3 text-xs text-[#7D7A75]">{hours < 24 ? `${Math.max(1, Math.floor(hours))} giờ trước` : `${Math.floor(hours / 24)} ngày trước`}</td>
+                <td className="max-w-[190px] px-3.5 py-3 text-[13px]">{item.reviewerId ? <span className="flex items-center gap-2" title={reviewerEmailById.get(item.reviewerId) ?? item.reviewerId}><i className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#F0EFED] text-[10px] font-bold">{(reviewerEmailById.get(item.reviewerId) ?? "??").slice(0, 2).toUpperCase()}</i><span className="truncate">{reviewerEmailById.get(item.reviewerId) ?? item.reviewerId}</span></span> : <span className="text-[#7D7A75]">Chưa gán</span>}</td>
+                <td className="whitespace-nowrap px-3.5 py-3 text-xs text-[#7D7A75]">{item.submittedAt ? formatDate(item.submittedAt) : "—"}</td>
                 <td className="whitespace-nowrap px-2 py-2"><div className="flex shrink-0 items-center gap-1">
                   {item.status === "PENDING_REVIEW" && <>
                     <Button type="button" variant="outline" size="icon" title="Duyệt học bổng" className="h-7 w-7 rounded-md border-[#D9E1EA] bg-white p-0 text-[#0F9D6E] hover:bg-[#E8F7F2] hover:text-[#087F68]" disabled={decision.isPending} onClick={() => decision.mutate({ id: item.id, action: "APPROVE" })}><Check className="h-3.5 w-3.5" /></Button>
@@ -501,8 +548,8 @@ export function ScholarshipManagement() {
           </table>
         </div>
         <div className="flex flex-wrap items-center gap-3 border-t border-[#E6E5E3] bg-[#F9F8F7] px-4 py-3 text-[12.5px] text-[#7D7A75]">
-          <span>Hiển thị {visibleRows.length} trong tổng {scholarships.data?.pagination.total ?? 0} tin · đang lọc theo {deadlineFilter === "soon" ? "sắp hết hạn" : statusStyle[status]?.label.toLowerCase()}</span>
-          <div className="ml-auto flex items-center gap-1.5"><select className="h-8 rounded-md border border-[#E6E5E3] bg-white px-2"><option>20 dòng</option><option>50 dòng</option><option>100 dòng</option></select><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">‹</button><button className="h-8 min-w-8 rounded-md border border-[#0F9D6E] bg-[#0F9D6E] font-semibold text-white">1</button><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">2</button><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">3</button><button className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white">›</button></div>
+          <span>Hiển thị {visibleRows.length} trong tổng {scholarships.data?.pagination.total ?? 0} tin · đang lọc theo {deadlineFilter ? `hạn chót dưới ${deadlineFilter} ngày` : statusStyle[status]?.label.toLowerCase()}</span>
+          <div className="ml-auto flex items-center gap-1.5"><select aria-label="Số dòng mỗi trang" value={pageSize} onChange={(event) => setParams({ pageSize: event.target.value, page: "1" })} className="h-8 rounded-md border border-[#E6E5E3] bg-white px-2"><option value="20">20 dòng</option><option value="50">50 dòng</option><option value="100">100 dòng</option></select><button type="button" aria-label="Trang trước" disabled={page <= 1} onClick={() => setParams({ page: String(page - 1) })} className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white disabled:cursor-not-allowed disabled:opacity-40">‹</button>{paginationPages(page, scholarships.data?.pagination.pageCount ?? 1).map((pageNumber) => <button key={pageNumber} type="button" onClick={() => setParams({ page: String(pageNumber) })} className={cn("h-8 min-w-8 rounded-md border bg-white", pageNumber === page ? "border-[#0F9D6E] bg-[#0F9D6E] font-semibold text-white" : "border-[#E6E5E3]")}>{pageNumber}</button>)}<button type="button" aria-label="Trang sau" disabled={page >= (scholarships.data?.pagination.pageCount ?? 1)} onClick={() => setParams({ page: String(page + 1) })} className="h-8 min-w-8 rounded-md border border-[#E6E5E3] bg-white disabled:cursor-not-allowed disabled:opacity-40">›</button></div>
         </div>
       </Card>
 
@@ -668,7 +715,7 @@ export function ScholarshipManagement() {
                 if (!ids.length) return;
                 const note = rejectNote.trim() ? `${rejectReason}\n\n${rejectNote.trim()}` : rejectReason;
                 if (ids.length === 1) decision.mutate({ id: ids[0], action: "REJECT", note });
-                else void Promise.all(ids.filter((id) => !id.startsWith("mock-")).map((id) => decision.mutateAsync({ id, action: "REJECT", note }))).then(() => { setSelectedRows(new Set()); setBulkRejectIds([]); });
+                else bulkDecision.mutate({ ids, action: "reject", note });
                 setRejectOpen(false);
                 setRejectReasonMenuOpen(false);
               }}
@@ -676,8 +723,29 @@ export function ScholarshipManagement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={bulkDeadlineOpen} onOpenChange={setBulkDeadlineOpen}>
+        <DialogContent className="max-w-md">
+          <DialogTitle>Gia hạn hạn chót</DialogTitle>
+          <DialogDescription>Áp dụng hạn chót mới cho {selectedRows.size} học bổng đã chọn.</DialogDescription>
+          <Input type="date" min={new Date().toISOString().slice(0, 10)} value={bulkDeadline} onChange={(event) => setBulkDeadline(event.target.value)} />
+          <DialogFooter><Button variant="outline" onClick={() => setBulkDeadlineOpen(false)}>Hủy</Button><Button disabled={!bulkDeadline || bulkUpdate.isPending} onClick={() => bulkUpdate.mutate({ ids: Array.from(selectedRows), deadline: new Date(`${bulkDeadline}T23:59:59+07:00`).toISOString(), reason: "Gia hạn hàng loạt từ trang quản trị" })}>{bulkUpdate.isPending && <Loader2 className="h-4 w-4 animate-spin" />}Cập nhật</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={bulkReviewerOpen} onOpenChange={setBulkReviewerOpen}>
+        <DialogContent className="max-w-md">
+          <DialogTitle>Gán người phụ trách</DialogTitle>
+          <DialogDescription>Phân công người duyệt cho {selectedRows.size} học bổng đã chọn.</DialogDescription>
+          <Select value={bulkReviewerId} onValueChange={setBulkReviewerId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unassigned">Chưa phân công</SelectItem>{(reviewers.data ?? []).map((reviewer) => <SelectItem key={reviewer.id} value={reviewer.id}>{reviewer.profile?.fullName ?? reviewer.email ?? reviewer.id}</SelectItem>)}</SelectContent></Select>
+          <DialogFooter><Button variant="outline" onClick={() => setBulkReviewerOpen(false)}>Hủy</Button><Button disabled={bulkUpdate.isPending || reviewers.isLoading} onClick={() => bulkUpdate.mutate({ ids: Array.from(selectedRows), reviewerId: bulkReviewerId === "unassigned" ? null : bulkReviewerId, reason: "Phân công người duyệt hàng loạt từ trang quản trị" })}>{bulkUpdate.isPending && <Loader2 className="h-4 w-4 animate-spin" />}Phân công</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function paginationPages(current: number, pageCount: number) {
+  const start = Math.max(1, Math.min(current - 1, pageCount - 2));
+  return Array.from({ length: Math.min(3, pageCount) }, (_, index) => start + index);
 }
 
 const VERSION_FIELDS: Array<{ key: string; label: string }> = [
