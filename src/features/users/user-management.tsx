@@ -1,15 +1,17 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Check, ChevronLeft, ChevronRight, Download, Eye, RefreshCw, Search, ShieldAlert, UserCog, Users, X } from "lucide-react";
+import { Ban, Check, ChevronLeft, ChevronRight, Download, Eye, Loader2, RefreshCw, Search, ShieldAlert, UserCog, Users, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
@@ -49,11 +51,11 @@ const statuses: Record<UserStatus, string> = {
   SUSPENDED: "Tạm khóa", DISABLED: "Đã vô hiệu hóa",
 };
 const cards: Array<{ value: "all" | UserStatus; label: string; hint: string; dot: string; active: string }> = [
-  { value: "all", label: "Tất cả người dùng", hint: "Tổng số tài khoản", dot: "bg-blue-500", active: "border-t-blue-500 bg-blue-50" },
-  { value: "ACTIVE", label: "Đang hoạt động", hint: "Có thể sử dụng nền tảng", dot: "bg-emerald-500", active: "border-t-emerald-500 bg-emerald-50" },
-  { value: "PENDING_VERIFICATION", label: "Chưa xác minh", hint: "Cần hoàn tất xác minh", dot: "bg-orange-500", active: "border-t-orange-500 bg-orange-50" },
-  { value: "SUSPENDED", label: "Tạm khóa", hint: "Có thể mở lại", dot: "bg-amber-500", active: "border-t-amber-500 bg-amber-50" },
-  { value: "DISABLED", label: "Đã vô hiệu hóa", hint: "Không thể đăng nhập", dot: "bg-red-500", active: "border-t-red-500 bg-red-50" },
+  { value: "all", label: "Tất cả người dùng", hint: "Tổng số tài khoản", dot: "bg-emerald-500", active: "border-t-emerald-500 bg-emerald-50" },
+  { value: "ACTIVE", label: "Đang hoạt động", hint: "Đã xác minh và có thể sử dụng", dot: "bg-emerald-500", active: "border-t-emerald-500 bg-emerald-50" },
+  { value: "PENDING_VERIFICATION", label: "Chưa xác minh", hint: "Cần hoàn tất xác minh", dot: "bg-orange-500", active: "border-t-emerald-500 bg-emerald-50" },
+  { value: "SUSPENDED", label: "Tạm khóa", hint: "Có thể mở lại", dot: "bg-amber-500", active: "border-t-emerald-500 bg-emerald-50" },
+  { value: "DISABLED", label: "Đã vô hiệu hóa", hint: "Không thể đăng nhập", dot: "bg-red-500", active: "border-t-emerald-500 bg-emerald-50" },
 ];
 
 export function UserManagement() {
@@ -63,6 +65,9 @@ export function UserManagement() {
   const [search, setSearch] = useState(searchParams.get("query") ?? "");
   const [selected, setSelected] = useState<string[]>([]);
   const [preview, setPreview] = useState<ApiUser | null>(null);
+  const [exporting, setExporting] = useState<"csv" | "report" | null>(null);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disableReason, setDisableReason] = useState("");
   const page = positiveInt(searchParams.get("page"), 1);
   const pageSize = positiveInt(searchParams.get("pageSize"), 20);
   const role = (searchParams.get("role") as UserRole | null) ?? "all";
@@ -77,10 +82,18 @@ export function UserManagement() {
     const requestedQuery = searchParams.get("query");
     if (requestedQuery) params.set("q", requestedQuery);
     if (role !== "all") params.set("role", role);
-    if (status !== "all" && status !== "PENDING_VERIFICATION") params.set("status", status.toLowerCase());
+    if (status === "ACTIVE") { params.set("status", "active"); params.set("emailVerified", "true"); }
+    else if (status === "PENDING_VERIFICATION") params.set("emailVerified", "false");
+    else if (status !== "all") params.set("status", status.toLowerCase());
     if (dateFrom) params.set("createdFrom", dateFrom);
+    const now = new Date();
+    if (lastLogin === "24h") params.set("lastLoginFrom", new Date(now.getTime() - 86_400_000).toISOString());
+    if (lastLogin === "7d") params.set("lastLoginFrom", new Date(now.getTime() - 7 * 86_400_000).toISOString());
+    if (lastLogin === "30d") params.set("lastLoginFrom", new Date(now.getTime() - 30 * 86_400_000).toISOString());
+    if (lastLogin === "inactive90") params.set("lastLoginTo", new Date(now.getTime() - 90 * 86_400_000).toISOString());
+    if (lastLogin === "never") params.set("neverLoggedIn", "true");
     return params.toString();
-  }, [dateFrom, page, pageSize, role, searchParams, status]);
+  }, [dateFrom, lastLogin, page, pageSize, role, searchParams, status]);
 
   const usersQuery = useQuery({
     queryKey: ["admin-users", queryString], placeholderData: keepPreviousData,
@@ -99,19 +112,22 @@ export function UserManagement() {
     queryFn: async () => {
       const response = await authClient.fetch(`/api/v1/admin/users/stats`);
       if (!response.ok) throw new Error("Không thể tải thống kê.");
+      const activeVerifiedResponse = await authClient.fetch("/api/v1/admin/users?status=active&emailVerified=true&page=1&pageSize=1");
+      if (!activeVerifiedResponse.ok) throw new Error("Không thể tải thống kê tài khoản hoạt động.");
       const data = await response.json() as { all: number; active: number; suspended: number; disabled: number; unverified: number };
-      return { all: data.all, ACTIVE: data.active, SUSPENDED: data.suspended, DISABLED: data.disabled, PENDING_VERIFICATION: data.unverified } as Record<"all" | UserStatus, number>;
+      const activeVerified = await activeVerifiedResponse.json() as BackendUsersResponse;
+      return { all: data.all, ACTIVE: activeVerified.pagination.total, SUSPENDED: data.suspended, DISABLED: data.disabled, PENDING_VERIFICATION: data.unverified } as Record<"all" | UserStatus, number>;
     },
   });
   const disableUsers = useMutation({
-    mutationFn: async (ids: string[]) => {
-      const response = await authClient.fetch("/api/v1/admin/users/bulk-actions", { method: "POST", body: JSON.stringify({ ids, action: "disable", reason: "Disabled from admin console" }) });
+    mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
+      const response = await authClient.fetch("/api/v1/admin/users/bulk-actions", { method: "POST", body: JSON.stringify({ ids, action: "disable", reason }) });
       if (!response.ok) throw new Error("Không thể vô hiệu hóa các tài khoản đã chọn.");
       const result = await response.json() as { affected: number };
       return { affectedCount: result.affected };
     },
     onSuccess: async ({ affectedCount }) => {
-      toast.success(`Đã vô hiệu hóa ${affectedCount} tài khoản.`); setSelected([]);
+      toast.success(`Đã vô hiệu hóa ${affectedCount} tài khoản.`); setSelected([]); setDisableOpen(false); setDisableReason("");
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["admin-users"] }), queryClient.invalidateQueries({ queryKey: ["admin-user-status-counts"] })]);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -124,21 +140,51 @@ export function UserManagement() {
   };
   const users = usersQuery.data?.items ?? [];
   const allSelected = users.length > 0 && users.every((user) => selected.includes(user.id));
-  const exportCsv = () => {
-    if (!users.length) return;
-    const rows = [["Mã người dùng", "Email", "Số điện thoại", "Vai trò", "Trạng thái", "Ngày đăng ký", "Đăng nhập gần nhất"], ...users.map((user) => [user.id, user.email ?? "", user.phone ?? "", user.roles.map((r) => roles[r]).join(" / "), statuses[user.status], dateTime(user.createdAt), user.lastLoginAt ? dateTime(user.lastLoginAt) : "Chưa đăng nhập"])];
-    const url = URL.createObjectURL(new Blob([`\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\n")}`], { type: "text/csv;charset=utf-8" }));
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `nguoi-dung-trang-${page}.csv`; anchor.click(); URL.revokeObjectURL(url);
+  const fetchExportUsers = async () => {
+    const params = new URLSearchParams(queryString); params.set("pageSize", "100");
+    const result: ApiUser[] = [];
+    let exportPage = 1; let pageCount = 1;
+    do {
+      params.set("page", String(exportPage));
+      const response = await authClient.fetch(`/api/v1/admin/users?${params}`);
+      if (!response.ok) throw new Error("Không thể tải dữ liệu người dùng để xuất.");
+      const data = normalizeUsers(await response.json() as BackendUsersResponse);
+      result.push(...data.items); pageCount = data.pagination.pageCount; exportPage += 1;
+    } while (exportPage <= pageCount);
+    return result;
+  };
+  const exportCsv = async () => {
+    setExporting("csv");
+    try {
+      const exportUsers = await fetchExportUsers();
+      if (!exportUsers.length) throw new Error("Không có người dùng phù hợp để xuất.");
+      const rows = [["Mã người dùng", "Tên hiển thị", "Email", "Số điện thoại", "Vai trò", "Trạng thái", "Xác minh email", "Ngày đăng ký", "Đăng nhập gần nhất"], ...exportUsers.map((user) => [user.id, user.displayName ?? "", user.email ?? "", user.phone ?? "", user.roles.map((r) => roles[r]).join(" / "), statuses[user.status], user.emailVerified ? "Đã xác minh" : "Chưa xác minh", dateTime(user.createdAt), user.lastLoginAt ? dateTime(user.lastLoginAt) : "Chưa đăng nhập"])];
+      downloadFile(`\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\n")}`, `nguoi-dung-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8");
+      toast.success(`Đã xuất ${exportUsers.length} người dùng ra CSV.`);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Không thể xuất CSV."); }
+    finally { setExporting(null); }
+  };
+  const exportReport = async () => {
+    const reportWindow = window.open("", "_blank");
+    if (!reportWindow) return toast.error("Trình duyệt đang chặn cửa sổ báo cáo.");
+    reportWindow.opener = null; reportWindow.document.write('<p style="font-family:Arial;padding:32px">Đang tạo báo cáo…</p>'); setExporting("report");
+    try {
+      const exportUsers = await fetchExportUsers();
+      if (!exportUsers.length) throw new Error("Không có người dùng phù hợp để lập báo cáo.");
+      reportWindow.document.open(); reportWindow.document.write(buildUserReport(exportUsers, new Date())); reportWindow.document.close(); reportWindow.focus();
+      window.setTimeout(() => reportWindow.print(), 250); toast.success(`Đã tạo báo cáo gồm ${exportUsers.length} người dùng.`);
+    } catch (error) { reportWindow.close(); toast.error(error instanceof Error ? error.message : "Không thể tạo báo cáo."); }
+    finally { setExporting(null); }
   };
 
-  return <div className="mx-auto max-w-[1440px] space-y-4 text-slate-900">
-    <header className="flex flex-wrap items-end gap-4">
-      <div><p className="text-[11px] font-semibold uppercase tracking-[.09em] text-slate-400">Vận hành</p><h1 className="text-2xl font-bold tracking-tight md:text-[26px]">Quản lý người dùng</h1></div>
-      <div className="ml-auto flex flex-wrap items-center gap-2"><span className="mr-1 text-xs text-slate-400">Dữ liệu cập nhật theo thời gian thực</span><Button variant="outline" size="sm" onClick={exportCsv} disabled={!users.length}><Download />Xuất CSV</Button><Button variant="outline" size="sm" onClick={() => usersQuery.refetch()} disabled={usersQuery.isFetching}><RefreshCw className={cn(usersQuery.isFetching && "animate-spin")} />Làm mới</Button></div>
+  return <div className="mx-auto max-w-[1500px] space-y-5 text-[#2C2C2B]">
+    <header className="flex flex-wrap items-start gap-4">
+      <div><p className="text-xs font-semibold uppercase tracking-wide text-[#6F7882]">Vận hành</p><h1 className="mt-1 text-[26px] font-semibold tracking-[-0.015em]">Người dùng</h1></div>
+      <div className="ml-auto flex flex-wrap items-center gap-2.5"><span className="mr-1 text-[13px] text-[#94A3B8]">Dữ liệu tính đến {new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(usersQuery.dataUpdatedAt || Date.now()))}</span><Button variant="outline" className="h-[38px] border-[#DDE5EE] bg-white px-4 text-[13px] text-[#64748B] shadow-sm hover:bg-white hover:text-[#334155]" onClick={() => void exportCsv()} disabled={Boolean(exporting) || usersQuery.isLoading}>{exporting === "csv" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Xuất CSV</Button><Button className="h-[38px] bg-[#1CB99F] px-4 text-[13px] text-white hover:bg-[#159C87]" onClick={() => void exportReport()} disabled={Boolean(exporting) || usersQuery.isLoading}>{exporting === "report" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Xuất báo cáo</Button></div>
     </header>
 
     <section className="grid overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-      {cards.map((card, index) => <button key={card.value} type="button" onClick={() => setParams({ status: card.value === "all" ? undefined : card.value, page: "1" })} className={cn("min-h-[98px] border-t-[3px] border-t-transparent p-4 text-left hover:bg-slate-50", index > 0 && "border-l border-slate-200", status === card.value && card.active)}><span className="flex items-center gap-2 text-xs font-medium text-slate-500"><i className={cn("h-2 w-2 rounded-full", card.dot)} />{card.label}</span><strong className="mt-1 block text-2xl font-bold">{statsQuery.isLoading ? "—" : (statsQuery.data?.[card.value] ?? 0).toLocaleString("vi-VN")}</strong><span className="block text-[11px] text-slate-400">{card.hint}</span></button>)}
+      {cards.map((card, index) => <button key={card.value} type="button" onClick={() => setParams({ status: card.value === "all" ? undefined : card.value, page: "1" })} className={cn("min-h-[98px] border-t-[3px] border-t-transparent p-4 text-left hover:bg-slate-50", index > 0 && "border-l border-slate-200", status === card.value && card.active)}><span className="flex items-center gap-2 text-xs font-medium text-slate-500"><i className={cn("h-2 w-2 rounded-full", card.dot)} />{card.label}</span><strong className="mt-1 block text-2xl font-bold">{statsQuery.isLoading || statsQuery.isError ? "—" : statsQuery.data![card.value].toLocaleString("vi-VN")}</strong><span className="block text-[11px] text-slate-400">{statsQuery.isError ? "Không tải được số liệu" : card.hint}</span></button>)}
     </section>
 
     <section className="space-y-3">
@@ -152,7 +198,7 @@ export function UserManagement() {
       </div>
     </section>
 
-    {selected.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800"><strong>{selected.length} tài khoản được chọn</strong><Button variant="outline" size="sm" className="h-8 border-red-200 text-red-700" disabled={disableUsers.isPending} onClick={() => disableUsers.mutate(selected)}><Ban />Vô hiệu hóa</Button><button type="button" className="ml-auto text-xs font-medium" onClick={() => setSelected([])}>Bỏ chọn</button></div>}
+    {selected.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800"><strong>{selected.length} tài khoản được chọn trên trang này</strong><Button variant="outline" size="sm" className="h-8 border-red-200 text-red-700" disabled={disableUsers.isPending} onClick={() => { setDisableReason(""); setDisableOpen(true); }}><Ban />Vô hiệu hóa</Button><button type="button" className="ml-auto text-xs font-medium" onClick={() => setSelected([])}>Bỏ chọn</button></div>}
 
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="overflow-x-auto"><table className="w-full min-w-[1050px] border-collapse">
@@ -169,6 +215,7 @@ export function UserManagement() {
 
     <aside className="rounded-lg border border-slate-200 border-l-[3px] border-l-emerald-500 bg-white p-4 text-sm shadow-sm"><h2 className="font-semibold">Quy tắc quản lý tài khoản</h2><p className="mt-1.5 leading-6 text-slate-500"><strong className="text-slate-700">Tạm khóa</strong> là trạng thái có thể mở lại; <strong className="text-slate-700">vô hiệu hóa</strong> ngăn hoàn toàn việc đăng nhập. Mọi thay đổi vai trò hoặc trạng thái phải có lý do và được ghi vào nhật ký thao tác.</p></aside>
     <Preview user={preview} onClose={() => setPreview(null)} />
+    <Dialog open={disableOpen} onOpenChange={setDisableOpen}><DialogContent className="max-w-md"><DialogTitle>Vô hiệu hóa tài khoản</DialogTitle><DialogDescription>{selected.length} tài khoản sẽ không thể đăng nhập cho đến khi được kích hoạt lại. Hành động này được ghi vào nhật ký quản trị.</DialogDescription><Textarea value={disableReason} onChange={(event) => setDisableReason(event.target.value)} placeholder="Nhập lý do vô hiệu hóa…" /><DialogFooter><Button variant="outline" onClick={() => setDisableOpen(false)}>Hủy</Button><Button variant="destructive" disabled={!disableReason.trim() || disableUsers.isPending} onClick={() => disableUsers.mutate({ ids: selected, reason: disableReason.trim() })}>{disableUsers.isPending && <Loader2 className="h-4 w-4 animate-spin" />}Xác nhận vô hiệu hóa</Button></DialogFooter></DialogContent></Dialog>
   </div>;
 }
 
@@ -196,3 +243,13 @@ function dateTime(value: string) { return `${date(value)} · ${time(value)}`; }
 function relative(value: string) { const target = new Date(value); const now = new Date(); const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime()) / 86_400_000); return days === 0 ? "Hôm nay" : days === 1 ? "Hôm qua" : days > 1 && days < 7 ? `${days} ngày trước` : date(value); }
 function csvCell(value: string) { return `"${value.replaceAll('"', '""')}"`; }
 function positiveInt(value: string | null, fallback: number) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback; }
+function downloadFile(content: string, fileName: string, type: string) { const url = URL.createObjectURL(new Blob([content], { type })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = fileName; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); }
+function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character] ?? character); }
+function buildUserReport(items: ApiUser[], generatedAt: Date) {
+  const active = items.filter((item) => item.status === "ACTIVE").length;
+  const unverified = items.filter((item) => !item.emailVerified).length;
+  const suspended = items.filter((item) => item.status === "SUSPENDED").length;
+  const disabled = items.filter((item) => item.status === "DISABLED").length;
+  const rows = items.map((item) => `<tr><td><strong>${escapeHtml(item.displayName ?? displayName(item.email))}</strong><small>${escapeHtml(shortId(item.id))}</small></td><td>${escapeHtml(item.email ?? "—")}</td><td>${escapeHtml(item.roles.map((role) => roles[role]).join(" / "))}</td><td>${escapeHtml(date(item.createdAt))}</td><td>${item.lastLoginAt ? escapeHtml(dateTime(item.lastLoginAt)) : "Chưa đăng nhập"}</td><td><span class="status status-${item.status.toLowerCase()}">${escapeHtml(statuses[item.status])}</span></td></tr>`).join("");
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Báo cáo người dùng</title><style>*{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#243447;font-family:Arial,sans-serif;font-size:13px}.page{max-width:1120px;margin:28px auto;background:#fff;padding:34px 38px;box-shadow:0 12px 35px rgba(36,52,71,.1)}header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;border-bottom:2px solid #19aa91;padding-bottom:20px}.eyebrow{margin:0 0 7px;color:#789;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:28px}.meta{text-align:right;color:#8795a7;line-height:1.6}.metrics{display:grid;grid-template-columns:repeat(5,1fr);margin:24px 0;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden}.metric{padding:16px;border-right:1px solid #e2e8f0}.metric:last-child{border-right:0}.metric:first-child{border-top:3px solid #19aa91;background:#eefaf7}.metric span{display:block;color:#718096;font-size:11px}.metric strong{display:block;margin-top:7px;font-size:24px}h2{margin:28px 0 12px;font-size:16px}table{width:100%;border-collapse:collapse;border:1px solid #e2e8f0}th{padding:11px 12px;background:#f8fafc;color:#64748b;font-size:10px;letter-spacing:.06em;text-align:left;text-transform:uppercase}td{padding:11px 12px;border-top:1px solid #edf2f7;vertical-align:top}td small{display:block;margin-top:4px;color:#94a3b8}.status{display:inline-block;border-radius:999px;padding:4px 8px;background:#eef2f7;font-size:11px;font-weight:700}.status-active{background:#e4f5ee;color:#0b7a57}.status-pending_verification{background:#fff4e5;color:#c25d00}.status-suspended{background:#fff7db;color:#9a6700}.status-disabled{background:#fce9e7;color:#d63939}footer{margin-top:24px;border-top:1px solid #e2e8f0;padding-top:14px;color:#94a3b8;font-size:11px}@media print{@page{size:A4 landscape;margin:12mm}body{background:#fff}.page{max-width:none;margin:0;padding:0;box-shadow:none}tr{page-break-inside:avoid}}</style></head><body><main class="page"><header><div><p class="eyebrow">Vận hành · TopScholar</p><h1>Báo cáo người dùng</h1></div><div class="meta">Tạo lúc ${escapeHtml(new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeStyle: "short" }).format(generatedAt))}<br>${items.length.toLocaleString("vi-VN")} tài khoản</div></header><section class="metrics"><div class="metric"><span>Tổng người dùng</span><strong>${items.length}</strong></div><div class="metric"><span>Đang hoạt động</span><strong>${active}</strong></div><div class="metric"><span>Chưa xác minh</span><strong>${unverified}</strong></div><div class="metric"><span>Tạm khóa</span><strong>${suspended}</strong></div><div class="metric"><span>Vô hiệu hóa</span><strong>${disabled}</strong></div></section><h2>Danh sách chi tiết</h2><table><thead><tr><th>Người dùng</th><th>Email</th><th>Vai trò</th><th>Ngày đăng ký</th><th>Đăng nhập gần nhất</th><th>Trạng thái</th></tr></thead><tbody>${rows}</tbody></table><footer>Dữ liệu được xuất từ trang quản trị TopScholar và phản ánh bộ lọc tại thời điểm tạo.</footer></main></body></html>`;
+}
