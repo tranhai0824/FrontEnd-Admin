@@ -31,7 +31,13 @@ type DashboardData = {
 
 async function getDashboard(days: number): Promise<DashboardData> {
   const response = await authClient.fetch(`/api/v1/admin/dashboard?days=${days}`);
-  if (!response.ok) throw new Error("Không tải được dữ liệu dashboard.");
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { message?: string } | null;
+    const fallback = response.status === 404
+      ? "Backend admin chưa được cấu hình đúng (404)."
+      : `Không tải được dữ liệu dashboard (${response.status}).`;
+    throw new Error(body?.message ?? fallback);
+  }
   return response.json() as Promise<DashboardData>;
 }
 
@@ -65,7 +71,7 @@ export function DashboardOverview() {
       </div>
     </div>
     {dashboard.isLoading && <PacmanLoader className="min-h-[420px]" label="Đang tải dashboard…" />}
-    {dashboard.isError && <Card className="border-red-200 bg-red-50"><CardContent className="flex items-center justify-between p-6 text-red-700"><span>Không tải được dữ liệu dashboard.</span><button type="button" className="underline" onClick={() => void dashboard.refetch()}>Thử lại</button></CardContent></Card>}
+    {dashboard.isError && <Card className="border-red-200 bg-red-50"><CardContent className="flex items-center justify-between p-6 text-red-700"><span>{dashboard.error instanceof Error ? dashboard.error.message : "Không tải được dữ liệu dashboard."}</span><button type="button" className="underline" onClick={() => void dashboard.refetch()}>Thử lại</button></CardContent></Card>}
     {dashboard.data && <>
       <Card className="dashboard-attention"><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-600" />Cần bạn xử lý</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <QueueCard label="Tin chờ duyệt" value={dashboard.data.attention.pendingScholarships} detail={`${dashboard.data.attention.overdueScholarships24h} quá 24h · ${dashboard.data.attention.overdueScholarships72h} quá 72h`} href="/admin/scholarships?status=PENDING_REVIEW" severity={dashboard.data.attention.overdueScholarships24h ? "critical" : "normal"} />

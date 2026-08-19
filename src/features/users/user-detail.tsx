@@ -24,23 +24,61 @@ type Detail = {
   notes: Array<{ id: string; content: string; createdAt: string }>;
 };
 
-function normalizeDetail(data: Record<string, any>): Detail {
+type BackendApplication = {
+  id: string;
+  status: string;
+  createdAt: string;
+  scholarship: { id: string; title: string };
+};
+
+type BackendDetail = {
+  id: string;
+  email?: string | null;
+  roles?: string[];
+  status?: string;
+  isEmailVerified?: boolean;
+  lastLoginAt?: string | null;
+  createdAt: string;
+  candidateProfile?: {
+    fullName?: string | null;
+    phone?: string | null;
+    gpa?: number | null;
+    currentDegreeLevel?: string | null;
+    applications?: BackendApplication[];
+  } | null;
+  mentorProfile?: { fullName?: string | null; bio?: string | null } | null;
+  partnerProfile?: {
+    id: string;
+    companyName?: string | null;
+    approvalStatus?: string | null;
+    description?: string | null;
+  } | null;
+  auditLogs?: Array<{ id: string; action: string; reason: string | null; createdAt: string }>;
+};
+
+function normalizeDetail(data: BackendDetail): Detail {
   const profile = data.candidateProfile ?? data.mentorProfile ?? data.partnerProfile ?? null;
   return {
     id: data.id,
     email: data.email ?? null,
-    phone: data.phone ?? null,
+    phone: data.candidateProfile?.phone ?? null,
     role: String(data.roles?.[0] ?? "candidate").toUpperCase(),
     status: String(data.status ?? "active").toUpperCase(),
     emailVerified: Boolean(data.isEmailVerified),
     phoneVerified: false,
     lastLoginAt: data.lastLoginAt ?? null,
     createdAt: data.createdAt,
-    profile: profile ? { fullName: profile.fullName ?? profile.companyName ?? null, gpa: profile.gpa ?? null, educationLevel: profile.currentDegreeLevel ?? null, country: profile.country ?? null, bio: profile.bio ?? null } : null,
-    memberships: data.partnerProfile ? [{ role: "PARTNER", isOwner: true, organization: { id: data.partnerProfile.id, name: data.partnerProfile.companyName, status: data.partnerProfile.approvalStatus } }] : [],
-    candidateApplications: data.candidateProfile?.applications ?? [],
+    profile: profile ? {
+      fullName: data.candidateProfile?.fullName ?? data.mentorProfile?.fullName ?? data.partnerProfile?.companyName ?? null,
+      gpa: data.candidateProfile?.gpa ?? null,
+      educationLevel: data.candidateProfile?.currentDegreeLevel ?? null,
+      country: null,
+      bio: data.mentorProfile?.bio ?? data.partnerProfile?.description ?? null,
+    } : null,
+    memberships: data.partnerProfile ? [{ role: "PARTNER", isOwner: true, organization: { id: data.partnerProfile.id, name: data.partnerProfile.companyName ?? "Đối tác", status: data.partnerProfile.approvalStatus ?? "pending" } }] : [],
+    candidateApplications: (data.candidateProfile?.applications ?? []).map((application) => ({ ...application, submittedAt: application.createdAt })),
     refreshTokens: [],
-    logs: [],
+    logs: data.auditLogs ?? [],
     notes: [],
   };
 }
@@ -53,7 +91,7 @@ export function UserDetail({ id }: { id: string }) {
   const query = useQuery({ queryKey: ["admin-user", id], queryFn: async () => {
     const response = await authClient.fetch(`/api/v1/admin/users/${id}`);
     if (!response.ok) throw new Error("Không thể tải người dùng.");
-    const data = normalizeDetail(await response.json() as Record<string, any>);
+    const data = normalizeDetail(await response.json() as BackendDetail);
     setRole(data.role);
     return data;
   } });

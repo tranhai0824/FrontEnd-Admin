@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 
 export const REFRESH_COOKIE = "topscholar_refresh";
+const PRODUCTION_ADMIN_API_URL = "https://backendforadmin.vercel.app";
 
 export function backendUrl(path: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+  const baseUrl = process.env.ADMIN_API_URL
+    ?? process.env.NEXT_PUBLIC_ADMIN_API_URL
+    ?? (process.env.NODE_ENV === "production"
+      ? PRODUCTION_ADMIN_API_URL
+      : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000");
   return `${baseUrl.replace(/\/$/, "")}${path}`;
 }
 

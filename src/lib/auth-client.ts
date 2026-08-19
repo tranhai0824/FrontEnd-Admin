@@ -1,4 +1,13 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const PRODUCTION_ADMIN_API_URL = "https://backendforadmin.vercel.app";
+
+// The public site API and the admin API are separate deployments. In production,
+// do not fall back to the legacy NEXT_PUBLIC_API_URL because that variable still
+// points at the public API on the existing Vercel project.
+const API_URL = (process.env.NEXT_PUBLIC_ADMIN_API_URL
+  ?? (process.env.NODE_ENV === "production"
+    ? PRODUCTION_ADMIN_API_URL
+    : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"))
+  .replace(/\/$/, "");
 let accessToken: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 
